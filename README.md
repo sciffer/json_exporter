@@ -7,5 +7,5 @@ json_exporter --help will provide with all the options required to use it.
 -j.urls - can contain 1 or a list of urls (seperated with commas).
 -j.labels & -j.values - are parallel to one each other (the first label will have the first value, etc..) - same as urls a list of labels and values are comma seperated.
 
-Example of how one can use the exporter to monitor elasticsearch:
-json_exporter -namespace elasticsearch -j.labels cluster,datacenter -j.values es1,dc1 -j.urls localhost:9200/_cluster/health,localhost:9200/_cluster/stats
+Example of how one can use the exporter to monitor elasticsearch:</br></br>
+<p>json_exporter -namespace elasticsearch -j.labels cluster,datacenter -j.values es1,dc1 -j.urls localhost:9200/_cluster/health,localhost:9200/_cluster/stats</p>
