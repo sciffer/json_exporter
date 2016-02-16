@@ -15,11 +15,6 @@ import (
 	"time"
 )
 
-const (
-	maxGauges   = 1024
-	maxCounters = 1024
-)
-
 // Exporter collects Elasticsearch stats from the given server and exports
 // them using the prometheus metrics package.
 type Exporter struct {
@@ -28,19 +23,20 @@ type Exporter struct {
 	labels      []string
 	labelvalues []string
 	mutex       sync.RWMutex
+	debug	    bool
 
 	up prometheus.Gauge
 
 	gauges   map[string]*prometheus.GaugeVec
-	counters map[string]*prometheus.CounterVec
+	updated  map[string]bool
 
 	client *http.Client
 }
 
 // NewExporter returns an initialized Exporter.
-func JsonExporter(urls []string, timeout time.Duration, namespace string, labels []string, labelvalues []string) *Exporter {
-	counters := make(map[string]*prometheus.CounterVec)
+func JsonExporter(urls []string, timeout time.Duration, namespace string, labels []string, labelvalues []string, debug bool) *Exporter {
 	gauges := make(map[string]*prometheus.GaugeVec)
+	updated := make(map[string]bool)
 
 	// Init our exporter.
 	return &Exporter{
@@ -48,6 +44,7 @@ func JsonExporter(urls []string, timeout time.Duration, namespace string, labels
 		namespace:   namespace,
 		labels:      labels,
 		labelvalues: labelvalues,
+		debug:       debug,
 
 		up: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: namespace,
@@ -55,8 +52,8 @@ func JsonExporter(urls []string, timeout time.Duration, namespace string, labels
 			Help:      "Was the json query successful?",
 		}),
 
-		counters: counters,
 		gauges:   gauges,
+		updated:  updated,
 
 		client: &http.Client{
 			Transport: &http.Transport{
@@ -80,10 +77,6 @@ func JsonExporter(urls []string, timeout time.Duration, namespace string, labels
 func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
 	ch <- e.up.Desc()
 
-	for _, c := range e.counters {
-		c.Describe(ch)
-	}
-
 	for _, g := range e.gauges {
 		g.Describe(ch)
 	}
@@ -98,6 +91,7 @@ func (e *Exporter) addGauge(name string, value float64, help string) {
 		e.gauges[name] = prometheus.NewGaugeVec(prometheus.GaugeOpts{Namespace: e.namespace, Name: name, Help: help}, e.labels)
 		e.gauges[name].WithLabelValues(e.labelvalues...).Set(value)
 	}
+	e.updated[name] = true
 }
 
 // Extract metrics of generic json interface
@@ -109,31 +103,59 @@ func (e *Exporter) extractJson(metric string, jsonInt map[string]interface{}) {
 	for k, v := range jsonInt {
 		switch vv := v.(type) {
 		case string:
-			log.Println(metric, k, "is string", vv)
+			if e.debug {
+				log.Println(metric, k, "is string", vv)
+			}
+			if vv[0] == '{' {
+				var stats map[string]interface{}
+		                err := json.Unmarshal([]byte(vv), &stats)
+				if err != nil {
+					log.Println("Failed to parse json from string",metric,k)
+				} else {
+					if e.debug {
+						log.Println("Extracting json values from the string in:",metric,k)
+					}
+					e.extractJson(metric + k, stats)
+				}
+			}
 		case int:
-			log.Println(metric, k, "is int =>", vv)
+			if e.debug {
+				log.Println(metric, k, "is int =>", vv)
+			}
 			e.addGauge(metric+k, float64(vv), "")
 		case float64:
-			log.Println(metric, k, "is float64 =>", vv)
+			if e.debug {
+				log.Println(metric, k, "is float64 =>", vv)
+			}
 			e.addGauge(metric+k, vv, "")
 		case bool:
 			if vv {
-				log.Println(metric, k, "is bool => 1")
+				if e.debug {
+					log.Println(metric, k, "is bool => 1")
+				}
 				e.addGauge(metric+k, float64(1), "")
 			} else {
-				log.Println(metric, k, "is bool => 0")
+				if e.debug {
+					log.Println(metric, k, "is bool => 0")
+				}
 				e.addGauge(metric+k, float64(0), "")
 			}
 		case map[string]interface{}:
 			newMetric := metric + k
-			log.Println(metric, k, "is hash", newMetric)
+			if e.debug {
+				log.Println(metric, k, "is hash", newMetric)
+			}
 			e.extractJson(newMetric, vv)
 		case []interface{}:
 			newMetric := metric + k
-			log.Println(k, "is an array:", newMetric)
+			if e.debug {
+				log.Println(k, "is an array:", newMetric)
+			}
 			e.extractJsonArray(newMetric, vv)
 		default:
-			log.Println(k, "is of a type I don't know how to handle")
+			if e.debug {
+				log.Println(k, "is of a type I don't know how to handle")
+			}
 		}
 	}
 }
@@ -144,31 +166,59 @@ func (e *Exporter) extractJsonArray(metric string, jsonInt []interface{}) {
 	for k, v := range jsonInt {
 		switch vv := v.(type) {
 		case string:
-			log.Println(metric, k, "is string", vv)
+			if e.debug {
+				log.Println(metric, k, "is string", vv)
+			}
+			if vv[0] == '{' {
+				var stats map[string]interface{}
+		                err := json.Unmarshal([]byte(vv), &stats)
+				if err != nil {
+					log.Println("Failed to parse json from string",metric,k)
+				} else {
+					e.extractJson(metric + strconv.Itoa(k), stats)
+					if e.debug {
+						log.Println("Extracting json values from the string in:",metric,k)
+					}
+				}
+			}
 		case int:
-			log.Println(metric, k, "is int =>", vv)
+			if e.debug {
+				log.Println(metric, k, "is int =>", vv)
+			}
 			e.addGauge(metric+strconv.Itoa(k), float64(vv), "")
 		case float64:
-			log.Println(metric, k, "is int =>", vv)
+			if e.debug {
+				log.Println(metric, k, "is int =>", vv)
+			}
 			e.addGauge(metric+strconv.Itoa(k), vv, "")
 		case bool:
 			if vv {
-				log.Println(metric, k, "is bool => 1")
+				if e.debug {
+					log.Println(metric, k, "is bool => 1")
+				}
 				e.addGauge(metric+strconv.Itoa(k), float64(1), "")
 			} else {
-				log.Println(metric, k, "is bool => 0")
+				if e.debug {
+					log.Println(metric, k, "is bool => 0")
+				}
 				e.addGauge(metric+strconv.Itoa(k), float64(0), "")
 			}
 		case map[string]interface{}:
 			newMetric := metric + strconv.Itoa(k)
-			log.Println(metric, k, "is hash", newMetric)
+			if e.debug {
+				log.Println(metric, k, "is hash", newMetric)
+			}
 			e.extractJson(newMetric, vv)
 		case []interface{}:
 			newMetric := metric + strconv.Itoa(k)
-			log.Println(k, "is an array:", newMetric)
+			if e.debug {
+				log.Println(k, "is an array:", newMetric)
+			}
 			e.extractJsonArray(newMetric, vv)
 		default:
-			log.Println(k, "is of a type I don't know how to handle")
+			if e.debug {
+				log.Println(k, "is of a type I don't know how to handle")
+			}
 		}
 	}
 }
@@ -180,6 +230,18 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 	defer e.mutex.Unlock()
 
 	defer func() { ch <- e.up }()
+
+	for name, updated := range e.updated {
+		if !updated {
+			//delete metricvec
+			delete(e.updated, name)
+			//delete updated value
+			delete(e.gauges, name)
+		} else {
+			//reset value
+			e.updated[name] = false
+		}
+	}
 
 	for _, URI := range e.Urls {
 		resp, err := e.client.Get(URI)
@@ -211,10 +273,6 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 	}
 	// Report metrics.
 
-	for _, c := range e.counters {
-		c.Collect(ch)
-	}
-
 	for _, g := range e.gauges {
 		g.Collect(ch)
 	}
@@ -228,6 +286,7 @@ func main() {
 		jLabelValues  = flag.String("j.values", "", "List of label values (comma seperated)")
 		jTimeout      = flag.Duration("j.timeout", 5*time.Second, "Timeout for trying to get to json URI.")
 		namespace     = flag.String("namespace", "json", "Namespace for metrics exported from Json.")
+		debug         = flag.Bool("debug", false, "Print debug information")
 	)
 	flag.Parse()
 	urls := flag.Args()
@@ -239,10 +298,10 @@ func main() {
 	labels := strings.Split(*jLabels, ",")
 	labelValues := strings.Split(*jLabelValues, ",")
 	if len(labels) != len(labelValues) {
-		log.Fatal("Labels amount does not match value amount")
+		log.Fatal("Labels amount does not match value amount!!!")
 	}
 
-	exporter := JsonExporter(urls, *jTimeout, *namespace, labels, labelValues)
+	exporter := JsonExporter(urls, *jTimeout, *namespace, labels, labelValues, *debug)
 	prometheus.MustRegister(exporter)
 
 	log.Println("Starting Server:", *listenAddress)
