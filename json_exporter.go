@@ -31,16 +31,16 @@ type Exporter struct {
 
 	up prometheus.Gauge
 
-	gauges   []*prometheus.GaugeVec
-	counters []*prometheus.CounterVec
+	gauges   map[string]*prometheus.GaugeVec
+	counters map[string]*prometheus.CounterVec
 
 	client *http.Client
 }
 
 // NewExporter returns an initialized Exporter.
 func JsonExporter(urls []string, timeout time.Duration, namespace string, labels []string, labelvalues []string) *Exporter {
-	counters := make([]*prometheus.CounterVec, 0, maxCounters)
-	gauges := make([]*prometheus.GaugeVec, 0, maxGauges)
+	counters := make(map[string]*prometheus.CounterVec)
+	gauges := make(map[string]*prometheus.GaugeVec)
 
 	// Init our exporter.
 	return &Exporter{
@@ -92,13 +92,11 @@ func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
 
 // Adding single gauge metric to the slice
 func (e *Exporter) addGauge(name string, value float64, help string) {
-	if len(e.gauges) < cap(e.gauges) {
-		curr := len(e.gauges)
-		e.gauges = e.gauges[:(curr + 1)]
-		e.gauges[curr] = prometheus.NewGaugeVec(prometheus.GaugeOpts{Namespace: e.namespace, Name: name, Help: help}, e.labels)
-		e.gauges[curr].WithLabelValues(e.labelvalues...).Set(value)
+	if _, exists := e.gauges[name]; exists {
+		e.gauges[name].WithLabelValues(e.labelvalues...).Set(value)
 	} else {
-		log.Println("Max gauges limit reached:", cap(e.gauges))
+		e.gauges[name] = prometheus.NewGaugeVec(prometheus.GaugeOpts{Namespace: e.namespace, Name: name, Help: help}, e.labels)
+		e.gauges[name].WithLabelValues(e.labelvalues...).Set(value)
 	}
 }
 
@@ -181,10 +179,6 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 	e.mutex.Lock() // To protect metrics from concurrent collects.
 	defer e.mutex.Unlock()
 
-	// Release previous metrics.
-	e.gauges = e.gauges[:0]
-	e.counters = e.counters[:0]
-
 	defer func() { ch <- e.up }()
 
 	for _, URI := range e.Urls {
@@ -237,7 +231,11 @@ func main() {
 	)
 	flag.Parse()
 	urls := flag.Args()
-	log.Println("Got the following Url list", urls)
+	if len(urls) < 1 {
+		log.Fatal("Got no URL's, please add use the following syntax to add URL's: json_exporter [options] <URL1>[ <URL2>[ ..<URLn>]]")
+	} else {
+		log.Println("Got the following Url list", urls)
+	}
 	labels := strings.Split(*jLabels, ",")
 	labelValues := strings.Split(*jLabelValues, ",")
 	if len(labels) != len(labelValues) {
