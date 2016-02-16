@@ -13,4 +13,4 @@ Example of how one can use the exporter to monitor elasticsearch:
 >json_exporter -namespace elasticsearch -j.labels cluster,datacenter -j.values es1,dc1 http://localhost:9200/_cluster/health http://localhost:9200/_cluster/stats
 
 Notes:
-*All values currently are considered by default guage as there is no way for me to determine if something is counter of gauge(it's generic).
+* All values currently are considered by default guage as there is no way for me to determine if something is counter of gauge(it's generic).
