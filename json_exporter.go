@@ -85,12 +85,10 @@ func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
 
 // Adding single gauge metric to the slice
 func (e *Exporter) addGauge(name string, value float64, help string) {
-	if _, exists := e.gauges[name]; exists {
-		e.gauges[name].WithLabelValues(e.labelvalues...).Set(value)
-	} else {
+	if _, exists := e.gauges[name]; !exists {
 		e.gauges[name] = prometheus.NewGaugeVec(prometheus.GaugeOpts{Namespace: e.namespace, Name: name, Help: help}, e.labels)
-		e.gauges[name].WithLabelValues(e.labelvalues...).Set(value)
 	}
+	e.gauges[name].WithLabelValues(e.labelvalues...).Set(value)
 	e.updated[name] = true
 }
 
