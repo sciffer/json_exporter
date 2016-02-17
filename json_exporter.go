@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"regexp"
 )
 
 // Exporter collects Elasticsearch stats from the given server and exports
@@ -30,13 +31,23 @@ type Exporter struct {
 	gauges   map[string]*prometheus.GaugeVec
 	updated  map[string]bool
 
+	blacklist *regexp.Regexp
+	whitelist *regexp.Regexp
+
 	client *http.Client
 }
 
 // NewExporter returns an initialized Exporter.
-func JsonExporter(urls []string, timeout time.Duration, namespace string, labels []string, labelvalues []string, debug bool) *Exporter {
+func JsonExporter(urls []string, timeout time.Duration, namespace string, labels []string, labelvalues []string, debug bool, blacklist string, whitelist string) *Exporter {
 	gauges := make(map[string]*prometheus.GaugeVec)
 	updated := make(map[string]bool)
+	var blist, wlist *regexp.Regexp
+	if blacklist != "" {
+		blist = regexp.MustCompile(blacklist)
+	}
+	if whitelist != "" {
+		wlist = regexp.MustCompile(whitelist)
+	}
 
 	// Init our exporter.
 	return &Exporter{
@@ -54,6 +65,9 @@ func JsonExporter(urls []string, timeout time.Duration, namespace string, labels
 
 		gauges:   gauges,
 		updated:  updated,
+
+		blacklist: blist,
+		whitelist: wlist,
 
 		client: &http.Client{
 			Transport: &http.Transport{
@@ -80,7 +94,15 @@ func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
 	for _, g := range e.gauges {
 		g.Describe(ch)
 	}
+}
 
+// Matching metric names against blacklist/whitelist
+func (e *Exporter) matchMetric(name string) bool {
+	if (e.blacklist != nil && e.blacklist.MatchString(name)) || (e.whitelist != nil && !e.whitelist.MatchString(name)) {
+		return false
+	} else {
+		return true
+	}
 }
 
 // Adding single gauge metric to the slice
@@ -99,60 +121,62 @@ func (e *Exporter) extractJson(metric string, jsonInt map[string]interface{}) {
 		metric = metric + "_"
 	}
 	for k, v := range jsonInt {
-		switch vv := v.(type) {
-		case string:
-			if e.debug {
-				log.Println(metric, k, "is string", vv)
-			}
-			if vv[0] == '{' {
-				var stats map[string]interface{}
-		                err := json.Unmarshal([]byte(vv), &stats)
-				if err != nil {
-					log.Println("Failed to parse json from string",metric,k)
+		if e.matchMetric(metric + k) {
+			switch vv := v.(type) {
+			case string:
+				if e.debug {
+					log.Println(metric, k, "is string", vv)
+				}
+				if vv[0] == '{' {
+					var stats map[string]interface{}
+			                err := json.Unmarshal([]byte(vv), &stats)
+					if err != nil {
+						log.Println("Failed to parse json from string",metric,k)
+					} else {
+						if e.debug {
+							log.Println("Extracting json values from the string in:",metric,k)
+						}
+						e.extractJson(metric + k, stats)
+					}
+				}
+			case int:
+				if e.debug {
+					log.Println(metric, k, "is int =>", vv)
+				}
+				e.addGauge(metric+k, float64(vv), "")
+			case float64:
+				if e.debug {
+					log.Println(metric, k, "is float64 =>", vv)
+				}
+				e.addGauge(metric+k, vv, "")
+			case bool:
+				if vv {
+					if e.debug {
+						log.Println(metric, k, "is bool => 1")
+					}
+					e.addGauge(metric+k, float64(1), "")
 				} else {
 					if e.debug {
-						log.Println("Extracting json values from the string in:",metric,k)
+						log.Println(metric, k, "is bool => 0")
 					}
-					e.extractJson(metric + k, stats)
+					e.addGauge(metric+k, float64(0), "")
 				}
-			}
-		case int:
-			if e.debug {
-				log.Println(metric, k, "is int =>", vv)
-			}
-			e.addGauge(metric+k, float64(vv), "")
-		case float64:
-			if e.debug {
-				log.Println(metric, k, "is float64 =>", vv)
-			}
-			e.addGauge(metric+k, vv, "")
-		case bool:
-			if vv {
+			case map[string]interface{}:
+				newMetric := metric + k
 				if e.debug {
-					log.Println(metric, k, "is bool => 1")
+					log.Println(metric, k, "is hash", newMetric)
 				}
-				e.addGauge(metric+k, float64(1), "")
-			} else {
+				e.extractJson(newMetric, vv)
+			case []interface{}:
+				newMetric := metric + k
 				if e.debug {
-					log.Println(metric, k, "is bool => 0")
+					log.Println(k, "is an array:", newMetric)
 				}
-				e.addGauge(metric+k, float64(0), "")
-			}
-		case map[string]interface{}:
-			newMetric := metric + k
-			if e.debug {
-				log.Println(metric, k, "is hash", newMetric)
-			}
-			e.extractJson(newMetric, vv)
-		case []interface{}:
-			newMetric := metric + k
-			if e.debug {
-				log.Println(k, "is an array:", newMetric)
-			}
-			e.extractJsonArray(newMetric, vv)
-		default:
-			if e.debug {
-				log.Println(k, "is of a type I don't know how to handle")
+				e.extractJsonArray(newMetric, vv)
+			default:
+				if e.debug {
+					log.Println(k, "is of a type I don't know how to handle")
+				}
 			}
 		}
 	}
@@ -162,60 +186,62 @@ func (e *Exporter) extractJsonArray(metric string, jsonInt []interface{}) {
 		metric = metric + "_"
 	}
 	for k, v := range jsonInt {
-		switch vv := v.(type) {
-		case string:
-			if e.debug {
-				log.Println(metric, k, "is string", vv)
-			}
-			if vv[0] == '{' {
-				var stats map[string]interface{}
-		                err := json.Unmarshal([]byte(vv), &stats)
-				if err != nil {
-					log.Println("Failed to parse json from string",metric,k)
-				} else {
-					e.extractJson(metric + strconv.Itoa(k), stats)
-					if e.debug {
-						log.Println("Extracting json values from the string in:",metric,k)
+		if e.matchMetric(metric + strconv.Itoa(k)) {
+			switch vv := v.(type) {
+			case string:
+				if e.debug {
+					log.Println(metric, k, "is string", vv)
+				}
+				if vv[0] == '{' {
+					var stats map[string]interface{}
+			                err := json.Unmarshal([]byte(vv), &stats)
+					if err != nil {
+						log.Println("Failed to parse json from string",metric,k)
+					} else {
+						e.extractJson(metric + strconv.Itoa(k), stats)
+						if e.debug {
+							log.Println("Extracting json values from the string in:",metric,k)
+						}
 					}
 				}
-			}
-		case int:
-			if e.debug {
-				log.Println(metric, k, "is int =>", vv)
-			}
-			e.addGauge(metric+strconv.Itoa(k), float64(vv), "")
-		case float64:
-			if e.debug {
-				log.Println(metric, k, "is int =>", vv)
-			}
-			e.addGauge(metric+strconv.Itoa(k), vv, "")
-		case bool:
-			if vv {
+			case int:
 				if e.debug {
-					log.Println(metric, k, "is bool => 1")
+					log.Println(metric, k, "is int =>", vv)
 				}
-				e.addGauge(metric+strconv.Itoa(k), float64(1), "")
-			} else {
+				e.addGauge(metric+strconv.Itoa(k), float64(vv), "")
+			case float64:
 				if e.debug {
-					log.Println(metric, k, "is bool => 0")
+					log.Println(metric, k, "is int =>", vv)
 				}
-				e.addGauge(metric+strconv.Itoa(k), float64(0), "")
-			}
-		case map[string]interface{}:
-			newMetric := metric + strconv.Itoa(k)
-			if e.debug {
-				log.Println(metric, k, "is hash", newMetric)
-			}
-			e.extractJson(newMetric, vv)
-		case []interface{}:
-			newMetric := metric + strconv.Itoa(k)
-			if e.debug {
-				log.Println(k, "is an array:", newMetric)
-			}
-			e.extractJsonArray(newMetric, vv)
-		default:
-			if e.debug {
-				log.Println(k, "is of a type I don't know how to handle")
+				e.addGauge(metric+strconv.Itoa(k), vv, "")
+			case bool:
+				if vv {
+					if e.debug {
+						log.Println(metric, k, "is bool => 1")
+					}
+					e.addGauge(metric+strconv.Itoa(k), float64(1), "")
+				} else {
+					if e.debug {
+						log.Println(metric, k, "is bool => 0")
+					}
+					e.addGauge(metric+strconv.Itoa(k), float64(0), "")
+				}
+			case map[string]interface{}:
+				newMetric := metric + strconv.Itoa(k)
+				if e.debug {
+					log.Println(metric, k, "is hash", newMetric)
+				}
+				e.extractJson(newMetric, vv)
+			case []interface{}:
+				newMetric := metric + strconv.Itoa(k)
+				if e.debug {
+					log.Println(k, "is an array:", newMetric)
+				}
+				e.extractJsonArray(newMetric, vv)
+			default:
+				if e.debug {
+					log.Println(k, "is of a type I don't know how to handle")
+				}
 			}
 		}
 	}
@@ -280,11 +306,13 @@ func main() {
 	var (
 		listenAddress = flag.String("web.listen-address", ":9109", "Address to listen on for web interface and telemetry.")
 		metricsPath   = flag.String("web.telemetry-path", "/metrics", "Path under which to expose metrics.")
-		jLabels       = flag.String("j.labels", "", "List of labels (comma seperated).")
-		jLabelValues  = flag.String("j.values", "", "List of label values (comma seperated)")
-		jTimeout      = flag.Duration("j.timeout", 5*time.Second, "Timeout for trying to get to json URI.")
+		Labels       = flag.String("labels", "", "List of labels (comma seperated).")
+		LabelValues  = flag.String("values", "", "List of label values (comma seperated)")
+		Timeout      = flag.Duration("timeout", 5*time.Second, "Timeout for trying to get to json URI.")
 		namespace     = flag.String("namespace", "json", "Namespace for metrics exported from Json.")
 		debug         = flag.Bool("debug", false, "Print debug information")
+		blacklist     = flag.String("blacklist", "", "Blacklist regex expression of metric names.")
+		whitelist     = flag.String("whitelist", "", "Whitelist regex expression of metric names.")
 	)
 	flag.Parse()
 	urls := flag.Args()
@@ -293,13 +321,13 @@ func main() {
 	} else {
 		log.Println("Got the following Url list", urls)
 	}
-	labels := strings.Split(*jLabels, ",")
-	labelValues := strings.Split(*jLabelValues, ",")
+	labels := strings.Split(*Labels, ",")
+	labelValues := strings.Split(*LabelValues, ",")
 	if len(labels) != len(labelValues) {
 		log.Fatal("Labels amount does not match value amount!!!")
 	}
 
-	exporter := JsonExporter(urls, *jTimeout, *namespace, labels, labelValues, *debug)
+	exporter := JsonExporter(urls, *Timeout, *namespace, labels, labelValues, *debug, *blacklist, *whitelist)
 	prometheus.MustRegister(exporter)
 
 	log.Println("Starting Server:", *listenAddress)
