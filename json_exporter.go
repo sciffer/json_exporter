@@ -25,6 +25,8 @@ type Exporter struct {
 	labelvalues []string
 	mutex       sync.RWMutex
 	debug	    bool
+	nextrefresh time.Time
+	interval    time.Duration
 
 	up prometheus.Gauge
 
@@ -38,7 +40,7 @@ type Exporter struct {
 }
 
 // NewExporter returns an initialized Exporter.
-func JsonExporter(urls []string, timeout time.Duration, namespace string, labels []string, labelvalues []string, debug bool, blacklist string, whitelist string) *Exporter {
+func JsonExporter(urls []string, timeout time.Duration, namespace string, labels []string, labelvalues []string, debug bool, blacklist string, whitelist string, refreshinterval time.Duration) *Exporter {
 	gauges := make(map[string]*prometheus.GaugeVec)
 	updated := make(map[string]bool)
 	var blist, wlist *regexp.Regexp
@@ -56,6 +58,8 @@ func JsonExporter(urls []string, timeout time.Duration, namespace string, labels
 		labels:      labels,
 		labelvalues: labelvalues,
 		debug:       debug,
+		nextrefresh: time.Now(),
+		interval:    refreshinterval,
 
 		up: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: namespace,
@@ -255,45 +259,48 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 
 	defer func() { ch <- e.up }()
 
-	for name, updated := range e.updated {
-		if !updated {
-			//delete metricvec
-			delete(e.updated, name)
-			//delete updated value
-			delete(e.gauges, name)
-		} else {
-			//reset value
-			e.updated[name] = false
+	if e.nextrefresh.Before(time.Now()) {
+		for name, updated := range e.updated {
+			if !updated {
+				//delete metricvec
+				delete(e.updated, name)
+				//delete updated value
+				delete(e.gauges, name)
+			} else {
+				//reset value
+				e.updated[name] = false
+			}
 		}
-	}
-
-	for _, URI := range e.Urls {
-		resp, err := e.client.Get(URI)
-		if err != nil {
-			e.up.Set(0)
-			log.Println("Error while querying Json endpoint:", err)
-			return
+	
+		for _, URI := range e.Urls {
+			resp, err := e.client.Get(URI)
+			if err != nil {
+				e.up.Set(0)
+				log.Println("Error while querying Json endpoint:", err)
+				return
+			}
+			defer resp.Body.Close()
+	
+			body, err := ioutil.ReadAll(resp.Body)
+			if err != nil {
+				log.Println("Failed to read Json response body:", err)
+				e.up.Set(0)
+				return
+			}
+	
+			e.up.Set(1)
+	
+			var allStats map[string]interface{}
+			err = json.Unmarshal(body, &allStats)
+			if err != nil {
+				log.Println("Failed to unmarshal JSON into struct:", err)
+				return
+			}
+	
+			// Extracrt the metrics from the json interface
+			e.extractJson("", allStats)
 		}
-		defer resp.Body.Close()
-
-		body, err := ioutil.ReadAll(resp.Body)
-		if err != nil {
-			log.Println("Failed to read Json response body:", err)
-			e.up.Set(0)
-			return
-		}
-
-		e.up.Set(1)
-
-		var allStats map[string]interface{}
-		err = json.Unmarshal(body, &allStats)
-		if err != nil {
-			log.Println("Failed to unmarshal JSON into struct:", err)
-			return
-		}
-
-		// Extracrt the metrics from the json interface
-		e.extractJson("", allStats)
+		e.nextrefresh = time.Now().Add(e.interval)
 	}
 	// Report metrics.
 
@@ -306,9 +313,10 @@ func main() {
 	var (
 		listenAddress = flag.String("web.listen-address", ":9109", "Address to listen on for web interface and telemetry.")
 		metricsPath   = flag.String("web.telemetry-path", "/metrics", "Path under which to expose metrics.")
-		Labels       = flag.String("labels", "", "List of labels (comma seperated).")
-		LabelValues  = flag.String("values", "", "List of label values (comma seperated)")
-		Timeout      = flag.Duration("timeout", 5*time.Second, "Timeout for trying to get to json URI.")
+		Labels        = flag.String("labels", "", "List of labels (comma seperated).")
+		LabelValues   = flag.String("values", "", "List of label values (comma seperated)")
+		Timeout       = flag.Duration("timeout", 5*time.Second, "Timeout for trying to get to json URI.")
+		interval      = flag.Duration("interval", 1*time.Minute, "Refresh interval for json scraping.")
 		namespace     = flag.String("namespace", "json", "Namespace for metrics exported from Json.")
 		debug         = flag.Bool("debug", false, "Print debug information")
 		blacklist     = flag.String("blacklist", "", "Blacklist regex expression of metric names.")
@@ -327,7 +335,7 @@ func main() {
 		log.Fatal("Labels amount does not match value amount!!!")
 	}
 
-	exporter := JsonExporter(urls, *Timeout, *namespace, labels, labelValues, *debug, *blacklist, *whitelist)
+	exporter := JsonExporter(urls, *Timeout, *namespace, labels, labelValues, *debug, *blacklist, *whitelist, *interval)
 	prometheus.MustRegister(exporter)
 
 	log.Println("Starting Server:", *listenAddress)
