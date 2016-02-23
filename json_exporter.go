@@ -15,6 +15,20 @@ import (
 	"time"
 	"regexp"
 )
+const (
+	helpSuffix = " json_exporter exported metric"
+)
+// Convert regex string to Map
+func regexStr2Map(regexString string) *map[string]*regexp.Regexp {
+	regexMap := make(map[string]*regexp.Regexp)
+	for _, regex := range strings.Split(regexString, "/") {
+		pair := strings.Split(regex, ":")
+		if (len(pair) == 2) && (len(pair[0]) > 0) && (len(pair[1]) > 0) {
+			regexMap[pair[0]] = regexp.MustCompile(pair[1])
+		}
+	}
+	return &regexMap
+}
 
 // Exporter collects Elasticsearch stats from the given server and exports
 // them using the prometheus metrics package.
@@ -36,11 +50,13 @@ type Exporter struct {
 	blacklist *regexp.Regexp
 	whitelist *regexp.Regexp
 
+	pathlabels map[string]*regexp.Regexp
+
 	client *http.Client
 }
 
 // NewExporter returns an initialized Exporter.
-func JsonExporter(urls []string, timeout time.Duration, namespace string, labels []string, labelvalues []string, debug bool, blacklist string, whitelist string, refreshinterval time.Duration) *Exporter {
+func JsonExporter(urls []string, timeout time.Duration, namespace string, labels []string, labelvalues []string, debug bool, blacklist string, whitelist string, refreshinterval time.Duration, pathlabels string, valuelabels string) *Exporter {
 	gauges := make(map[string]*prometheus.GaugeVec)
 	updated := make(map[string]bool)
 	var blist, wlist *regexp.Regexp
@@ -52,7 +68,7 @@ func JsonExporter(urls []string, timeout time.Duration, namespace string, labels
 	}
 
 	// Init our exporter.
-	return &Exporter{
+	exporter := Exporter{
 		Urls:        urls,
 		namespace:   namespace,
 		labels:      labels,
@@ -73,6 +89,8 @@ func JsonExporter(urls []string, timeout time.Duration, namespace string, labels
 		blacklist: blist,
 		whitelist: wlist,
 
+		pathlabels: *(regexStr2Map(pathlabels)),
+
 		client: &http.Client{
 			Transport: &http.Transport{
 				Dial: func(netw, addr string) (net.Conn, error) {
@@ -88,6 +106,10 @@ func JsonExporter(urls []string, timeout time.Duration, namespace string, labels
 			},
 		},
 	}
+
+	exporter.collectLabels(regexStr2Map(valuelabels))
+
+	return &exporter
 }
 
 // Describe describes all the metrics ever exported by the elasticsearch
@@ -108,6 +130,15 @@ func (e *Exporter) matchMetric(name string) bool {
 		return true
 	}
 }
+// Match metric name based on regex list - for usage as label value
+func (e *Exporter) matchLabel(name string, labelRegex *map[string]*regexp.Regexp) string {
+	for k, v := range *labelRegex {
+		if v.MatchString(name) {
+			return k
+		}
+	}
+	return ""
+}
 
 // Adding single gauge metric to the slice
 func (e *Exporter) addGauge(name string, value float64, help string) {
@@ -118,135 +149,253 @@ func (e *Exporter) addGauge(name string, value float64, help string) {
 	e.updated[name] = true
 }
 
+// Adding a label to slices
+func (e *Exporter) addLabel(name string, value string) {
+	e.labels = append(e.labels, name)
+	e.labelvalues = append(e.labelvalues, value)
+}
+
+// Delete the latest label
+func (e *Exporter) delLastLabel() {
+	newLastIndex := len(e.labels) - 1
+	if newLastIndex >= 0 {
+		e.labels = e.labels[:newLastIndex]
+		e.labelvalues = e.labelvalues[:newLastIndex]
+	}
+}
+
 // Extract metrics of generic json interface
 // push extracted metrics accordingly (to guages only at the moment)
-func (e *Exporter) extractJson(metric string, jsonInt map[string]interface{}) {
-	if metric != "" {
-		metric = metric + "_"
-	}
+func (e *Exporter) extractLabel(metric string, jsonInt map[string]interface{}, regexMap *map[string]*regexp.Regexp) {
+	newMetric := ""
 	for k, v := range jsonInt {
-		if e.matchMetric(metric + k) {
+		if len(*regexMap) == 0 {
+			return
+		}
+		if len(metric) > 0 {
+			newMetric = metric + "_" + k
+		} else {
+			newMetric = k
+		}
+		label := e.matchLabel(newMetric, regexMap)
+		if label != "" {
+			delete(*regexMap, label)
+			if e.debug {
+				log.Println("Value label regex match with:", newMetric)
+			}
 			switch vv := v.(type) {
 			case string:
 				if e.debug {
-					log.Println(metric, k, "is string", vv)
+					log.Println(newMetric, "is string", vv)
 				}
-				if vv[0] == '{' {
-					var stats map[string]interface{}
-			                err := json.Unmarshal([]byte(vv), &stats)
-					if err != nil {
-						log.Println("Failed to parse json from string",metric,k)
-					} else {
-						if e.debug {
-							log.Println("Extracting json values from the string in:",metric,k)
-						}
-						e.extractJson(metric + k, stats)
-					}
-				}
+				e.addLabel(label, vv)
 			case int:
 				if e.debug {
-					log.Println(metric, k, "is int =>", vv)
+					log.Println(newMetric, "is int =>", vv)
 				}
-				e.addGauge(metric+k, float64(vv), "")
+				e.addLabel(label, strconv.Itoa(vv))
 			case float64:
 				if e.debug {
-					log.Println(metric, k, "is float64 =>", vv)
+					log.Println(newMetric, "is float64 =>", vv)
 				}
-				e.addGauge(metric+k, vv, "")
+				e.addLabel(label, strconv.FormatFloat(vv, 'E', -1, 64))
 			case bool:
-				if vv {
-					if e.debug {
-						log.Println(metric, k, "is bool => 1")
-					}
-					e.addGauge(metric+k, float64(1), "")
-				} else {
-					if e.debug {
-						log.Println(metric, k, "is bool => 0")
-					}
-					e.addGauge(metric+k, float64(0), "")
+				if e.debug {
+					log.Println(newMetric, "is bool =>",vv)
 				}
+				e.addLabel(label, strconv.FormatBool(vv))
+			}
+		} else {
+			switch vv := v.(type) {
 			case map[string]interface{}:
-				newMetric := metric + k
 				if e.debug {
-					log.Println(metric, k, "is hash", newMetric)
+					log.Println(newMetric, "is hash")
 				}
-				e.extractJson(newMetric, vv)
-			case []interface{}:
-				newMetric := metric + k
-				if e.debug {
-					log.Println(k, "is an array:", newMetric)
-				}
-				e.extractJsonArray(newMetric, vv)
-			default:
-				if e.debug {
-					log.Println(k, "is of a type I don't know how to handle")
-				}
+				e.extractLabel(newMetric, vv, regexMap)
 			}
 		}
 	}
 }
-func (e *Exporter) extractJsonArray(metric string, jsonInt []interface{}) {
-	if metric != "" {
-		metric = metric + "_"
+// Collect labels from all URLs based on label regex list from JSON URL's
+func (e* Exporter) collectLabels(regexMap *map[string]*regexp.Regexp){
+	for _, URI := range e.Urls {
+	        resp, err := e.client.Get(URI)
+	        if err != nil {
+	                log.Println("Error while querying Json endpoint:", err)
+	                continue
+	        }
+
+	        body, err := ioutil.ReadAll(resp.Body)
+	        if err != nil {
+	                log.Println("Failed to read Json response body:", err)
+			resp.Body.Close()
+	                continue
+	        }
+
+		var allJson map[string]interface{}
+		err = json.Unmarshal(body, &allJson)
+		if err != nil {
+			log.Println("Failed to unmarshal JSON into struct:", err)
+			continue
+		}
+
+	        // Extracrt the metrics from the json interface
+		e.extractLabel("", allJson, regexMap)
+		if len(*regexMap) == 0 {
+			break
+		}
 	}
+}
+
+// Extract metrics of generic json interface
+// push extracted metrics accordingly (to guages only at the moment)
+func (e *Exporter) extractJson(metric string, jsonInt map[string]interface{}) {
+	newMetric := ""
 	for k, v := range jsonInt {
-		if e.matchMetric(metric + strconv.Itoa(k)) {
+		if len(metric) > 0 {
+			newMetric = metric + "_" + k
+		} else {
+			newMetric = k
+		}
+		if e.matchMetric(newMetric) {
+			label := e.matchLabel(newMetric, &e.pathlabels)
+			if label != "" {
+				newMetric = label
+				e.addLabel(label,k)
+			}
 			switch vv := v.(type) {
 			case string:
 				if e.debug {
-					log.Println(metric, k, "is string", vv)
+					log.Println(newMetric, "is string", vv)
 				}
 				if vv[0] == '{' {
 					var stats map[string]interface{}
 			                err := json.Unmarshal([]byte(vv), &stats)
 					if err != nil {
-						log.Println("Failed to parse json from string",metric,k)
+						log.Println("Failed to parse json from string",newMetric)
 					} else {
-						e.extractJson(metric + strconv.Itoa(k), stats)
 						if e.debug {
-							log.Println("Extracting json values from the string in:",metric,k)
+							log.Println("Extracting json values from the string in:",newMetric)
+						}
+						e.extractJson(newMetric, stats)
+					}
+				}
+			case int:
+				if e.debug {
+					log.Println(newMetric, "is int =>", vv, e.labels)
+				}
+				e.addGauge(newMetric, float64(vv), newMetric + helpSuffix)
+			case float64:
+				if e.debug {
+					log.Println(newMetric, "is float64 =>", vv, e.labels)
+				}
+				e.addGauge(newMetric, vv, newMetric + helpSuffix)
+			case bool:
+				if vv {
+					if e.debug {
+						log.Println(newMetric, "is bool => 1", e.labels)
+					}
+					e.addGauge(newMetric, float64(1), newMetric + helpSuffix)
+				} else {
+					if e.debug {
+						log.Println(newMetric, "is bool => 0", e.labels)
+					}
+					e.addGauge(newMetric, float64(0), newMetric + helpSuffix)
+				}
+			case map[string]interface{}:
+				if e.debug {
+					log.Println(newMetric, "is hash", e.labels)
+				}
+				e.extractJson(newMetric, vv)
+			case []interface{}:
+				if e.debug {
+					log.Println(newMetric, "is an array", e.labels)
+				}
+				e.extractJsonArray(newMetric, vv)
+			default:
+				if e.debug {
+					log.Println(newMetric, "is of a type I don't know how to handle")
+				}
+			}
+			if label != "" {
+				e.delLastLabel()
+			}
+		}
+	}
+}
+
+// Extract metrics from json array interface
+func (e *Exporter) extractJsonArray(metric string, jsonInt []interface{}) {
+	newMetric := ""
+	for k, v := range jsonInt {
+		if len(metric) > 0 {
+                        newMetric = metric + "_" + strconv.Itoa(k)
+                } else {
+                        newMetric = strconv.Itoa(k)
+                }
+		if e.matchMetric(newMetric) {
+			label := e.matchLabel(newMetric, &e.pathlabels)
+                        if label != "" {
+                                newMetric = label
+                                e.addLabel(label,strconv.Itoa(k))
+                        }
+			switch vv := v.(type) {
+			case string:
+				if e.debug {
+					log.Println(newMetric, "is string", vv)
+				}
+				if vv[0] == '{' {
+					var stats map[string]interface{}
+			                err := json.Unmarshal([]byte(vv), &stats)
+					if err != nil {
+						log.Println("Failed to parse json from string",newMetric)
+					} else {
+						e.extractJson(newMetric, stats)
+						if e.debug {
+							log.Println("Extracting json values from the string in:",newMetric)
 						}
 					}
 				}
 			case int:
 				if e.debug {
-					log.Println(metric, k, "is int =>", vv)
+					log.Println(newMetric, "is int =>", vv)
 				}
-				e.addGauge(metric+strconv.Itoa(k), float64(vv), "")
+				e.addGauge(newMetric, float64(vv), newMetric + helpSuffix)
 			case float64:
 				if e.debug {
-					log.Println(metric, k, "is int =>", vv)
+					log.Println(newMetric, "is int =>", vv)
 				}
-				e.addGauge(metric+strconv.Itoa(k), vv, "")
+				e.addGauge(newMetric, vv, newMetric + helpSuffix)
 			case bool:
 				if vv {
 					if e.debug {
-						log.Println(metric, k, "is bool => 1")
+						log.Println(newMetric, "is bool => 1")
 					}
-					e.addGauge(metric+strconv.Itoa(k), float64(1), "")
+					e.addGauge(newMetric, float64(1), newMetric + helpSuffix)
 				} else {
 					if e.debug {
-						log.Println(metric, k, "is bool => 0")
+						log.Println(newMetric, "is bool => 0")
 					}
-					e.addGauge(metric+strconv.Itoa(k), float64(0), "")
+					e.addGauge(newMetric, float64(0), newMetric + helpSuffix)
 				}
 			case map[string]interface{}:
-				newMetric := metric + strconv.Itoa(k)
 				if e.debug {
-					log.Println(metric, k, "is hash", newMetric)
+					log.Println(newMetric, "is hash")
 				}
 				e.extractJson(newMetric, vv)
 			case []interface{}:
-				newMetric := metric + strconv.Itoa(k)
 				if e.debug {
-					log.Println(k, "is an array:", newMetric)
+					log.Println(newMetric, "is an array")
 				}
 				e.extractJsonArray(newMetric, vv)
 			default:
 				if e.debug {
-					log.Println(k, "is of a type I don't know how to handle")
+					log.Println(newMetric, "is of a type I don't know how to handle")
 				}
 			}
+                        if label != "" {
+                                e.delLastLabel()
+                        }
 		}
 	}
 }
@@ -271,32 +420,32 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 				e.updated[name] = false
 			}
 		}
-	
+
 		for _, URI := range e.Urls {
 			resp, err := e.client.Get(URI)
 			if err != nil {
 				e.up.Set(0)
 				log.Println("Error while querying Json endpoint:", err)
-				return
+				continue
 			}
-			defer resp.Body.Close()
-	
+
 			body, err := ioutil.ReadAll(resp.Body)
 			if err != nil {
 				log.Println("Failed to read Json response body:", err)
 				e.up.Set(0)
-				return
+				continue
 			}
-	
+			resp.Body.Close()
+
 			e.up.Set(1)
-	
+
 			var allStats map[string]interface{}
 			err = json.Unmarshal(body, &allStats)
 			if err != nil {
 				log.Println("Failed to unmarshal JSON into struct:", err)
-				return
+				continue
 			}
-	
+
 			// Extracrt the metrics from the json interface
 			e.extractJson("", allStats)
 		}
@@ -321,6 +470,8 @@ func main() {
 		debug         = flag.Bool("debug", false, "Print debug information")
 		blacklist     = flag.String("blacklist", "", "Blacklist regex expression of metric names.")
 		whitelist     = flag.String("whitelist", "", "Whitelist regex expression of metric names.")
+		valuelabel    = flag.String("valuelabel", "", "Create labels from values using metric-name regex, format: <label1>:<regex1>[/<label2>:<regex2>[/...]].")
+		pathlabel     = flag.String("pathlabel", "", "Create labels from path segments with regex match, format: <label1>:<regex1>[/<label2>:<regex2>[/...]].")
 	)
 	flag.Parse()
 	urls := flag.Args()
@@ -329,13 +480,18 @@ func main() {
 	} else {
 		log.Println("Got the following Url list", urls)
 	}
-	labels := strings.Split(*Labels, ",")
-	labelValues := strings.Split(*LabelValues, ",")
-	if len(labels) != len(labelValues) {
-		log.Fatal("Labels amount does not match value amount!!!")
+	//Importing static labels
+	labels := []string{}
+	labelValues := []string{}
+	if len(*Labels) > 0 && len(*LabelValues) > 0 {
+		labels = strings.Split(*Labels, ",")
+		labelValues = strings.Split(*LabelValues, ",")
+		if len(labels) != len(labelValues) {
+			log.Fatal("Labels amount does not match value amount!!!")
+		}
 	}
 
-	exporter := JsonExporter(urls, *Timeout, *namespace, labels, labelValues, *debug, *blacklist, *whitelist, *interval)
+	exporter := JsonExporter(urls, *Timeout, *namespace, labels, labelValues, *debug, *blacklist, *whitelist, *interval, *pathlabel, *valuelabel)
 	prometheus.MustRegister(exporter)
 
 	log.Println("Starting Server:", *listenAddress)
