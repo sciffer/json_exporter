@@ -9,15 +9,17 @@ import (
 	"net"
 	"net/http"
 	_ "net/http/pprof"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-	"regexp"
 )
+
 const (
 	helpSuffix = " json_exporter exported metric"
 )
+
 // Convert regex string to Map
 func regexStr2Map(regexString string) *map[string]*regexp.Regexp {
 	regexMap := make(map[string]*regexp.Regexp)
@@ -38,14 +40,14 @@ type Exporter struct {
 	labels      []string
 	labelvalues []string
 	mutex       sync.RWMutex
-	debug	    bool
+	debug       bool
 	nextrefresh time.Time
 	interval    time.Duration
 
 	up prometheus.Gauge
 
-	gauges   map[string]*prometheus.GaugeVec
-	updated  map[string]bool
+	gauges  map[string]*prometheus.GaugeVec
+	updated map[string]bool
 
 	blacklist *regexp.Regexp
 	whitelist *regexp.Regexp
@@ -83,8 +85,8 @@ func JsonExporter(urls []string, timeout time.Duration, namespace string, labels
 			Help:      "Was the json query successful?",
 		}),
 
-		gauges:   gauges,
-		updated:  updated,
+		gauges:  gauges,
+		updated: updated,
 
 		blacklist: blist,
 		whitelist: wlist,
@@ -130,6 +132,7 @@ func (e *Exporter) matchMetric(name string) bool {
 		return true
 	}
 }
+
 // Match metric name based on regex list - for usage as label value
 func (e *Exporter) matchLabel(name string, labelRegex *map[string]*regexp.Regexp) string {
 	for k, v := range *labelRegex {
@@ -201,7 +204,7 @@ func (e *Exporter) extractLabel(metric string, jsonInt map[string]interface{}, r
 				e.addLabel(label, strconv.FormatFloat(vv, 'E', -1, 64))
 			case bool:
 				if e.debug {
-					log.Println(newMetric, "is bool =>",vv)
+					log.Println(newMetric, "is bool =>", vv)
 				}
 				e.addLabel(label, strconv.FormatBool(vv))
 			}
@@ -216,21 +219,22 @@ func (e *Exporter) extractLabel(metric string, jsonInt map[string]interface{}, r
 		}
 	}
 }
-// Collect labels from all URLs based on label regex list from JSON URL's
-func (e* Exporter) collectLabels(regexMap *map[string]*regexp.Regexp){
-	for _, URI := range e.Urls {
-	        resp, err := e.client.Get(URI)
-	        if err != nil {
-	                log.Println("Error while querying Json endpoint:", err)
-	                continue
-	        }
 
-	        body, err := ioutil.ReadAll(resp.Body)
-	        if err != nil {
-	                log.Println("Failed to read Json response body:", err)
+// Collect labels from all URLs based on label regex list from JSON URL's
+func (e *Exporter) collectLabels(regexMap *map[string]*regexp.Regexp) {
+	for _, URI := range e.Urls {
+		resp, err := e.client.Get(URI)
+		if err != nil {
+			log.Println("Error while querying Json endpoint:", err)
+			continue
+		}
+
+		body, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			log.Println("Failed to read Json response body:", err)
 			resp.Body.Close()
-	                continue
-	        }
+			continue
+		}
 
 		var allJson map[string]interface{}
 		err = json.Unmarshal(body, &allJson)
@@ -239,7 +243,7 @@ func (e* Exporter) collectLabels(regexMap *map[string]*regexp.Regexp){
 			continue
 		}
 
-	        // Extracrt the metrics from the json interface
+		// Extracrt the metrics from the json interface
 		e.extractLabel("", allJson, regexMap)
 		if len(*regexMap) == 0 {
 			break
@@ -261,7 +265,7 @@ func (e *Exporter) extractJson(metric string, jsonInt map[string]interface{}) {
 			label := e.matchLabel(newMetric, &e.pathlabels)
 			if label != "" {
 				newMetric = label
-				e.addLabel(label,k)
+				e.addLabel(label, k)
 			}
 			switch vv := v.(type) {
 			case string:
@@ -270,12 +274,12 @@ func (e *Exporter) extractJson(metric string, jsonInt map[string]interface{}) {
 				}
 				if vv[0] == '{' {
 					var stats map[string]interface{}
-			                err := json.Unmarshal([]byte(vv), &stats)
+					err := json.Unmarshal([]byte(vv), &stats)
 					if err != nil {
-						log.Println("Failed to parse json from string",newMetric)
+						log.Println("Failed to parse json from string", newMetric)
 					} else {
 						if e.debug {
-							log.Println("Extracting json values from the string in:",newMetric)
+							log.Println("Extracting json values from the string in:", newMetric)
 						}
 						e.extractJson(newMetric, stats)
 					}
@@ -284,23 +288,23 @@ func (e *Exporter) extractJson(metric string, jsonInt map[string]interface{}) {
 				if e.debug {
 					log.Println(newMetric, "is int =>", vv, e.labels)
 				}
-				e.addGauge(newMetric, float64(vv), newMetric + helpSuffix)
+				e.addGauge(newMetric, float64(vv), newMetric+helpSuffix)
 			case float64:
 				if e.debug {
 					log.Println(newMetric, "is float64 =>", vv, e.labels)
 				}
-				e.addGauge(newMetric, vv, newMetric + helpSuffix)
+				e.addGauge(newMetric, vv, newMetric+helpSuffix)
 			case bool:
 				if vv {
 					if e.debug {
 						log.Println(newMetric, "is bool => 1", e.labels)
 					}
-					e.addGauge(newMetric, float64(1), newMetric + helpSuffix)
+					e.addGauge(newMetric, float64(1), newMetric+helpSuffix)
 				} else {
 					if e.debug {
 						log.Println(newMetric, "is bool => 0", e.labels)
 					}
-					e.addGauge(newMetric, float64(0), newMetric + helpSuffix)
+					e.addGauge(newMetric, float64(0), newMetric+helpSuffix)
 				}
 			case map[string]interface{}:
 				if e.debug {
@@ -329,16 +333,16 @@ func (e *Exporter) extractJsonArray(metric string, jsonInt []interface{}) {
 	newMetric := ""
 	for k, v := range jsonInt {
 		if len(metric) > 0 {
-                        newMetric = metric + "_" + strconv.Itoa(k)
-                } else {
-                        newMetric = strconv.Itoa(k)
-                }
+			newMetric = metric + "_" + strconv.Itoa(k)
+		} else {
+			newMetric = strconv.Itoa(k)
+		}
 		if e.matchMetric(newMetric) {
 			label := e.matchLabel(newMetric, &e.pathlabels)
-                        if label != "" {
-                                newMetric = label
-                                e.addLabel(label,strconv.Itoa(k))
-                        }
+			if label != "" {
+				newMetric = label
+				e.addLabel(label, strconv.Itoa(k))
+			}
 			switch vv := v.(type) {
 			case string:
 				if e.debug {
@@ -346,13 +350,13 @@ func (e *Exporter) extractJsonArray(metric string, jsonInt []interface{}) {
 				}
 				if vv[0] == '{' {
 					var stats map[string]interface{}
-			                err := json.Unmarshal([]byte(vv), &stats)
+					err := json.Unmarshal([]byte(vv), &stats)
 					if err != nil {
-						log.Println("Failed to parse json from string",newMetric)
+						log.Println("Failed to parse json from string", newMetric)
 					} else {
 						e.extractJson(newMetric, stats)
 						if e.debug {
-							log.Println("Extracting json values from the string in:",newMetric)
+							log.Println("Extracting json values from the string in:", newMetric)
 						}
 					}
 				}
@@ -360,23 +364,23 @@ func (e *Exporter) extractJsonArray(metric string, jsonInt []interface{}) {
 				if e.debug {
 					log.Println(newMetric, "is int =>", vv)
 				}
-				e.addGauge(newMetric, float64(vv), newMetric + helpSuffix)
+				e.addGauge(newMetric, float64(vv), newMetric+helpSuffix)
 			case float64:
 				if e.debug {
 					log.Println(newMetric, "is int =>", vv)
 				}
-				e.addGauge(newMetric, vv, newMetric + helpSuffix)
+				e.addGauge(newMetric, vv, newMetric+helpSuffix)
 			case bool:
 				if vv {
 					if e.debug {
 						log.Println(newMetric, "is bool => 1")
 					}
-					e.addGauge(newMetric, float64(1), newMetric + helpSuffix)
+					e.addGauge(newMetric, float64(1), newMetric+helpSuffix)
 				} else {
 					if e.debug {
 						log.Println(newMetric, "is bool => 0")
 					}
-					e.addGauge(newMetric, float64(0), newMetric + helpSuffix)
+					e.addGauge(newMetric, float64(0), newMetric+helpSuffix)
 				}
 			case map[string]interface{}:
 				if e.debug {
@@ -393,9 +397,9 @@ func (e *Exporter) extractJsonArray(metric string, jsonInt []interface{}) {
 					log.Println(newMetric, "is of a type I don't know how to handle")
 				}
 			}
-                        if label != "" {
-                                e.delLastLabel()
-                        }
+			if label != "" {
+				e.delLastLabel()
+			}
 		}
 	}
 }
