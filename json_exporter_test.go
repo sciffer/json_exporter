@@ -16,13 +16,13 @@ var (
 		"value_label":	1,
 		"vlabel":	"value2",
 		"pathroot":map[string]interface{}{
-			"metric3":	4.0,
 			"pathvalue1":map[string]interface{}{
 				"metric1": 2,
 				"pathvalue2":map[string]interface{}{
 					"metric2": 3.0,
 				},
 			},
+			"metric3":	4.0,
 		},
 		"metric4": 5.0,
 		"blacklistedMetric": 6,

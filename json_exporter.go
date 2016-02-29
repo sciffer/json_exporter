@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/sciffer/json_exporter/version"
 	"io/ioutil"
 	"log"
 	"net"
@@ -14,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"text/template"
+	"bytes"
 )
 
 const (
@@ -464,6 +467,7 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 
 func main() {
 	var (
+		version       = flag.Bool("version", false, "Print version information.")
 		listenAddress = flag.String("web.listen-address", ":9109", "Address to listen on for web interface and telemetry.")
 		metricsPath   = flag.String("web.telemetry-path", "/metrics", "Path under which to expose metrics.")
 		Labels        = flag.String("labels", "", "List of labels (comma seperated).")
@@ -478,6 +482,10 @@ func main() {
 		pathlabel     = flag.String("pathlabel", "", "Create labels from path segments with regex match, format: <label1>:<regex1>[/<label2>:<regex2>[/...]].")
 	)
 	flag.Parse()
+	printVersion()
+	if *version {
+		return
+	}
 	urls := flag.Args()
 	if len(urls) < 1 {
 		log.Fatal("Got no URL's, please add use the following syntax to add URL's: json_exporter [options] <URL1>[ <URL2>[ ..<URLn>]]")
@@ -510,4 +518,19 @@ func main() {
              </html>`))
 	})
 	log.Fatal(http.ListenAndServe(*listenAddress, nil))
+}
+
+func printVersion() {
+	var versionInfoTmpl = `
+		prometheus, version {{.version}} (branch: {{.branch}}, revision: {{.revision}})
+		build user:       {{.buildUser}}
+		build date:       {{.buildDate}}
+		go version:       {{.goVersion}}
+		`
+	t := template.Must(template.New("version").Parse(versionInfoTmpl))
+	var buf bytes.Buffer
+	if err := t.ExecuteTemplate(&buf, "version", version.Map); err != nil {
+		panic(err)
+	}
+	log.Println(strings.TrimSpace(buf.String()))
 }
