@@ -18,4 +18,4 @@ Example of how one can use the exporter to monitor elasticsearch:
 
 Notes:
 * All values currently are considered by default guage as there is no way for me to determine if something is counter of gauge(it's generic).
-** pathlabel option change the metric name upon match, please make sure to test carefully before applying in production.
+* Pathlabel option change the metric name upon match, please make sure to test carefully before applying in production.
