@@ -48,7 +48,8 @@ type Exporter struct {
 	up prometheus.Gauge
 
 	gauges  map[string]*prometheus.GaugeVec
-	updated map[string]bool
+	updated map[string]uint
+	exist map[string]uint
 
 	blacklist *regexp.Regexp
 	whitelist *regexp.Regexp
@@ -61,7 +62,8 @@ type Exporter struct {
 // NewExporter returns an initialized Exporter.
 func JsonExporter(urls []string, timeout time.Duration, namespace string, labels []string, labelvalues []string, debug bool, blacklist string, whitelist string, refreshinterval time.Duration, pathlabels string, valuelabels string) *Exporter {
 	gauges := make(map[string]*prometheus.GaugeVec)
-	updated := make(map[string]bool)
+	updated := make(map[string]uint)
+	exist := make(map[string]uint)
 	var blist, wlist *regexp.Regexp
 	if blacklist != "" {
 		blist = regexp.MustCompile(blacklist)
@@ -88,6 +90,7 @@ func JsonExporter(urls []string, timeout time.Duration, namespace string, labels
 
 		gauges:  gauges,
 		updated: updated,
+		exist: exist,
 
 		blacklist: blist,
 		whitelist: wlist,
@@ -148,9 +151,11 @@ func (e *Exporter) matchLabel(name string, labelRegex *map[string]*regexp.Regexp
 func (e *Exporter) addGauge(name string, value float64, help string) {
 	if _, exists := e.gauges[name]; !exists {
 		e.gauges[name] = prometheus.NewGaugeVec(prometheus.GaugeOpts{Namespace: e.namespace, Name: name, Help: help}, e.labels)
+		e.updated[name] = 0
+		e.exist[name] = 0
 	}
 	e.gauges[name].WithLabelValues(e.labelvalues...).Set(value)
-	e.updated[name] = true
+	e.updated[name] += 1
 }
 
 // Adding a label to slices
@@ -415,14 +420,16 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 
 	if e.nextrefresh.Before(time.Now()) {
 		for name, updated := range e.updated {
-			if !updated {
-				//delete metricvec
-				delete(e.updated, name)
+			if updated < e.exist[name] {
 				//delete updated value
+				delete(e.updated, name)
+				delete(e.exist, name)
+				//delete metricvec
 				delete(e.gauges, name)
 			} else {
+				e.exist[name] = e.updated[name]
 				//reset value
-				e.updated[name] = false
+				e.updated[name] = 0
 			}
 		}
 
