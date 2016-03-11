@@ -149,13 +149,15 @@ func (e *Exporter) matchLabel(name string, labelRegex *map[string]*regexp.Regexp
 
 // Adding single gauge metric to the slice
 func (e *Exporter) addGauge(name string, value float64, help string) {
-	if _, exists := e.gauges[name]; !exists {
-		e.gauges[name] = prometheus.NewGaugeVec(prometheus.GaugeOpts{Namespace: e.namespace, Name: name, Help: help}, e.labels)
-		e.updated[name] = 0
-		e.exist[name] = 0
+	if e.matchMetric(name) {
+		if _, exists := e.gauges[name]; !exists {
+			e.gauges[name] = prometheus.NewGaugeVec(prometheus.GaugeOpts{Namespace: e.namespace, Name: name, Help: help}, e.labels)
+			e.updated[name] = 0
+			e.exist[name] = 0
+		}
+		e.gauges[name].WithLabelValues(e.labelvalues...).Set(value)
+		e.updated[name] += 1
 	}
-	e.gauges[name].WithLabelValues(e.labelvalues...).Set(value)
-	e.updated[name] += 1
 }
 
 // Adding a label to slices
@@ -267,69 +269,67 @@ func (e *Exporter) extractJson(metric string, jsonInt map[string]interface{}) {
 		} else {
 			newMetric = k
 		}
-		if e.matchMetric(newMetric) {
-			label := e.matchLabel(newMetric, &e.pathlabels)
-			if label != "" {
-				newMetric = label
-				e.addLabel(label, k)
+		label := e.matchLabel(newMetric, &e.pathlabels)
+		if label != "" {
+			newMetric = label
+			e.addLabel(label, k)
+		}
+		switch vv := v.(type) {
+		case string:
+			if e.debug {
+				log.Println(newMetric, "is string", vv)
 			}
-			switch vv := v.(type) {
-			case string:
-				if e.debug {
-					log.Println(newMetric, "is string", vv)
-				}
-				if vv[0] == '{' {
-					var stats map[string]interface{}
-					err := json.Unmarshal([]byte(vv), &stats)
-					if err != nil {
-						log.Println("Failed to parse json from string", newMetric)
-					} else {
-						if e.debug {
-							log.Println("Extracting json values from the string in:", newMetric)
-						}
-						e.extractJson(newMetric, stats)
-					}
-				}
-			case int:
-				if e.debug {
-					log.Println(newMetric, "is int =>", vv, e.labels)
-				}
-				e.addGauge(newMetric, float64(vv), newMetric+helpSuffix)
-			case float64:
-				if e.debug {
-					log.Println(newMetric, "is float64 =>", vv, e.labels)
-				}
-				e.addGauge(newMetric, vv, newMetric+helpSuffix)
-			case bool:
-				if vv {
-					if e.debug {
-						log.Println(newMetric, "is bool => 1", e.labels)
-					}
-					e.addGauge(newMetric, float64(1), newMetric+helpSuffix)
+			if vv[0] == '{' {
+				var stats map[string]interface{}
+				err := json.Unmarshal([]byte(vv), &stats)
+				if err != nil {
+					log.Println("Failed to parse json from string", newMetric)
 				} else {
 					if e.debug {
-						log.Println(newMetric, "is bool => 0", e.labels)
+						log.Println("Extracting json values from the string in:", newMetric)
 					}
-					e.addGauge(newMetric, float64(0), newMetric+helpSuffix)
-				}
-			case map[string]interface{}:
-				if e.debug {
-					log.Println(newMetric, "is hash", e.labels)
-				}
-				e.extractJson(newMetric, vv)
-			case []interface{}:
-				if e.debug {
-					log.Println(newMetric, "is an array", e.labels)
-				}
-				e.extractJsonArray(newMetric, vv)
-			default:
-				if e.debug {
-					log.Println(newMetric, "is of a type I don't know how to handle")
+					e.extractJson(newMetric, stats)
 				}
 			}
-			if label != "" {
-				e.delLastLabel()
+		case int:
+			if e.debug {
+				log.Println(newMetric, "is int =>", vv, e.labels)
 			}
+			e.addGauge(newMetric, float64(vv), newMetric+helpSuffix)
+		case float64:
+			if e.debug {
+				log.Println(newMetric, "is float64 =>", vv, e.labels)
+			}
+			e.addGauge(newMetric, vv, newMetric+helpSuffix)
+		case bool:
+			if vv {
+				if e.debug {
+					log.Println(newMetric, "is bool => 1", e.labels)
+				}
+				e.addGauge(newMetric, float64(1), newMetric+helpSuffix)
+			} else {
+				if e.debug {
+					log.Println(newMetric, "is bool => 0", e.labels)
+				}
+				e.addGauge(newMetric, float64(0), newMetric+helpSuffix)
+			}
+		case map[string]interface{}:
+			if e.debug {
+				log.Println(newMetric, "is hash", e.labels)
+			}
+			e.extractJson(newMetric, vv)
+		case []interface{}:
+			if e.debug {
+				log.Println(newMetric, "is an array", e.labels)
+			}
+			e.extractJsonArray(newMetric, vv)
+		default:
+			if e.debug {
+				log.Println(newMetric, "is of a type I don't know how to handle")
+			}
+		}
+		if label != "" {
+			e.delLastLabel()
 		}
 	}
 }
@@ -343,69 +343,67 @@ func (e *Exporter) extractJsonArray(metric string, jsonInt []interface{}) {
 		} else {
 			newMetric = strconv.Itoa(k)
 		}
-		if e.matchMetric(newMetric) {
-			label := e.matchLabel(newMetric, &e.pathlabels)
-			if label != "" {
-				newMetric = label
-				e.addLabel(label, strconv.Itoa(k))
+		label := e.matchLabel(newMetric, &e.pathlabels)
+		if label != "" {
+			newMetric = label
+			e.addLabel(label, strconv.Itoa(k))
+		}
+		switch vv := v.(type) {
+		case string:
+			if e.debug {
+				log.Println(newMetric, "is string", vv)
 			}
-			switch vv := v.(type) {
-			case string:
-				if e.debug {
-					log.Println(newMetric, "is string", vv)
-				}
-				if vv[0] == '{' {
-					var stats map[string]interface{}
-					err := json.Unmarshal([]byte(vv), &stats)
-					if err != nil {
-						log.Println("Failed to parse json from string", newMetric)
-					} else {
-						e.extractJson(newMetric, stats)
-						if e.debug {
-							log.Println("Extracting json values from the string in:", newMetric)
-						}
-					}
-				}
-			case int:
-				if e.debug {
-					log.Println(newMetric, "is int =>", vv)
-				}
-				e.addGauge(newMetric, float64(vv), newMetric+helpSuffix)
-			case float64:
-				if e.debug {
-					log.Println(newMetric, "is int =>", vv)
-				}
-				e.addGauge(newMetric, vv, newMetric+helpSuffix)
-			case bool:
-				if vv {
-					if e.debug {
-						log.Println(newMetric, "is bool => 1")
-					}
-					e.addGauge(newMetric, float64(1), newMetric+helpSuffix)
+			if vv[0] == '{' {
+				var stats map[string]interface{}
+				err := json.Unmarshal([]byte(vv), &stats)
+				if err != nil {
+					log.Println("Failed to parse json from string", newMetric)
 				} else {
+					e.extractJson(newMetric, stats)
 					if e.debug {
-						log.Println(newMetric, "is bool => 0")
+						log.Println("Extracting json values from the string in:", newMetric)
 					}
-					e.addGauge(newMetric, float64(0), newMetric+helpSuffix)
-				}
-			case map[string]interface{}:
-				if e.debug {
-					log.Println(newMetric, "is hash")
-				}
-				e.extractJson(newMetric, vv)
-			case []interface{}:
-				if e.debug {
-					log.Println(newMetric, "is an array")
-				}
-				e.extractJsonArray(newMetric, vv)
-			default:
-				if e.debug {
-					log.Println(newMetric, "is of a type I don't know how to handle")
 				}
 			}
-			if label != "" {
-				e.delLastLabel()
+		case int:
+			if e.debug {
+				log.Println(newMetric, "is int =>", vv)
 			}
+			e.addGauge(newMetric, float64(vv), newMetric+helpSuffix)
+		case float64:
+			if e.debug {
+				log.Println(newMetric, "is int =>", vv)
+			}
+			e.addGauge(newMetric, vv, newMetric+helpSuffix)
+		case bool:
+			if vv {
+				if e.debug {
+					log.Println(newMetric, "is bool => 1")
+				}
+				e.addGauge(newMetric, float64(1), newMetric+helpSuffix)
+			} else {
+				if e.debug {
+					log.Println(newMetric, "is bool => 0")
+				}
+				e.addGauge(newMetric, float64(0), newMetric+helpSuffix)
+			}
+		case map[string]interface{}:
+			if e.debug {
+				log.Println(newMetric, "is hash")
+			}
+			e.extractJson(newMetric, vv)
+		case []interface{}:
+			if e.debug {
+				log.Println(newMetric, "is an array")
+			}
+			e.extractJsonArray(newMetric, vv)
+		default:
+			if e.debug {
+				log.Println(newMetric, "is of a type I don't know how to handle")
+			}
+		}
+		if label != "" {
+			e.delLastLabel()
 		}
 	}
 }
