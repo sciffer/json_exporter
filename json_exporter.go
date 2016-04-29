@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"crypto/tls"
 	_ "net/http/pprof"
 	"regexp"
 	"strconv"
@@ -60,7 +61,7 @@ type Exporter struct {
 }
 
 // NewExporter returns an initialized Exporter.
-func JsonExporter(urls []string, timeout time.Duration, namespace string, labels []string, labelvalues []string, debug bool, blacklist string, whitelist string, refreshinterval time.Duration, pathlabels string, valuelabels string) *Exporter {
+func JsonExporter(urls []string, timeout time.Duration, namespace string, labels []string, labelvalues []string, debug bool, unsecure bool, blacklist string, whitelist string, refreshinterval time.Duration, pathlabels string, valuelabels string) *Exporter {
 	gauges := make(map[string]*prometheus.GaugeVec)
 	updated := make(map[string]uint)
 	exist := make(map[string]uint)
@@ -99,6 +100,7 @@ func JsonExporter(urls []string, timeout time.Duration, namespace string, labels
 
 		client: &http.Client{
 			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: unsecure},
 				Dial: func(netw, addr string) (net.Conn, error) {
 					c, err := net.DialTimeout(netw, addr, timeout)
 					if err != nil {
@@ -479,6 +481,7 @@ func main() {
 		interval      = flag.Duration("interval", 1*time.Minute, "Refresh interval for json scraping.")
 		namespace     = flag.String("namespace", "json", "Namespace for metrics exported from Json.")
 		debug         = flag.Bool("debug", false, "Print debug information")
+		unsecured     = flag.Bool("unsecured", false, "Accept untrusted https certificate(used for private certificates)")
 		blacklist     = flag.String("blacklist", "", "Blacklist regex expression of metric names.")
 		whitelist     = flag.String("whitelist", "", "Whitelist regex expression of metric names.")
 		valuelabel    = flag.String("valuelabel", "", "Create labels from values using metric-name regex, format: <label1>:<regex1>[/<label2>:<regex2>[/...]].")
@@ -506,7 +509,7 @@ func main() {
 		}
 	}
 
-	exporter := JsonExporter(urls, *Timeout, *namespace, labels, labelValues, *debug, *blacklist, *whitelist, *interval, *pathlabel, *valuelabel)
+	exporter := JsonExporter(urls, *Timeout, *namespace, labels, labelValues, *debug, *unsecured, *blacklist, *whitelist, *interval, *pathlabel, *valuelabel)
 	prometheus.MustRegister(exporter)
 
 	log.Println("Starting Server:", *listenAddress)
