@@ -281,7 +281,7 @@ func (e *Exporter) extractJson(metric string, jsonInt map[string]interface{}) {
 			if e.debug {
 				log.Println(newMetric, "is string", vv)
 			}
-			if vv[0] == '{' {
+			if len(vv) > 2 && vv[0] == '{' {
 				var stats map[string]interface{}
 				err := json.Unmarshal([]byte(vv), &stats)
 				if err != nil {
@@ -355,7 +355,7 @@ func (e *Exporter) extractJsonArray(metric string, jsonInt []interface{}) {
 			if e.debug {
 				log.Println(newMetric, "is string", vv)
 			}
-			if vv[0] == '{' {
+			if len(vv) >2 && vv[0] == '{' {
 				var stats map[string]interface{}
 				err := json.Unmarshal([]byte(vv), &stats)
 				if err != nil {
