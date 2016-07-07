@@ -274,6 +274,12 @@ func (e *Exporter) collectLabels(regexMap *map[string]*regexp.Regexp) {
 // push extracted metrics accordingly (to guages only at the moment)
 func (e *Exporter) extractJson(metric string, jsonInt map[string]interface{}) {
 	newMetric := ""
+	//Handle jmx mode metric name replacement
+	if e.jmx {
+    if name, ok := jsonInt["name"].(string); ok {
+		  metric = e.cleaner.Replace(name)
+    }
+	}
 	for k, v := range jsonInt {
 		if len(metric) > 0 {
 			newMetric = metric + "_" + k
@@ -289,10 +295,6 @@ func (e *Exporter) extractJson(metric string, jsonInt map[string]interface{}) {
 		case string:
 			if e.debug {
 				log.Println(newMetric, "is string", vv)
-			}
-			//Handle jmx mode metric name replacement
-			if e.jmx && k == "name" {
-				newMetric = e.cleaner.Replace(k)
 			}
 			//Handle the case where the string contains json value
 			if len(vv) > 2 && vv[0] == '{' {
