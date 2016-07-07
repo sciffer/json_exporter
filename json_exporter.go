@@ -22,6 +22,8 @@ const (
 	Version = 0.1
 )
 
+
+
 // Convert regex string to Map
 func regexStr2Map(regexString string) *map[string]*regexp.Regexp {
 	regexMap := make(map[string]*regexp.Regexp)
@@ -43,6 +45,7 @@ type Exporter struct {
 	labelvalues []string
 	mutex       sync.RWMutex
 	debug       bool
+	jmx         bool
 	nextrefresh time.Time
 	interval    time.Duration
 
@@ -55,17 +58,20 @@ type Exporter struct {
 	blacklist *regexp.Regexp
 	whitelist *regexp.Regexp
 
+        cleaner   *strings.Replacer
+
 	pathlabels map[string]*regexp.Regexp
 
 	client *http.Client
 }
 
 // NewExporter returns an initialized Exporter.
-func JsonExporter(urls []string, timeout time.Duration, namespace string, labels []string, labelvalues []string, debug bool, unsecure bool, blacklist string, whitelist string, refreshinterval time.Duration, pathlabels string, valuelabels string) *Exporter {
+func JsonExporter(urls []string, timeout time.Duration, namespace string, labels []string, labelvalues []string, debug bool, unsecure bool, blacklist string, whitelist string, refreshinterval time.Duration, pathlabels string, valuelabels string, jmx bool) *Exporter {
 	gauges := make(map[string]*prometheus.GaugeVec)
 	updated := make(map[string]uint)
 	exist := make(map[string]uint)
 	var blist, wlist *regexp.Regexp
+	var IleagalCharsConversion = []string {" ","_",",","_",":","_","-","_","=","_",".","_"} 
 	if blacklist != "" {
 		blist = regexp.MustCompile(blacklist)
 	}
@@ -80,6 +86,7 @@ func JsonExporter(urls []string, timeout time.Duration, namespace string, labels
 		labels:      labels,
 		labelvalues: labelvalues,
 		debug:       debug,
+		jmx:         jmx,
 		nextrefresh: time.Now(),
 		interval:    refreshinterval,
 
@@ -95,6 +102,8 @@ func JsonExporter(urls []string, timeout time.Duration, namespace string, labels
 
 		blacklist: blist,
 		whitelist: wlist,
+
+		cleaner: strings.NewReplacer(IleagalCharsConversion...),
 
 		pathlabels: *(regexStr2Map(pathlabels)),
 
@@ -281,6 +290,11 @@ func (e *Exporter) extractJson(metric string, jsonInt map[string]interface{}) {
 			if e.debug {
 				log.Println(newMetric, "is string", vv)
 			}
+			//Handle jmx mode metric name replacement
+			if e.jmx && k == "name" {
+				newMetric = e.cleaner.Replace(k)
+			}
+			//Handle the case where the string contains json value
 			if len(vv) > 2 && vv[0] == '{' {
 				var stats map[string]interface{}
 				err := json.Unmarshal([]byte(vv), &stats)
@@ -481,6 +495,7 @@ func main() {
 		interval      = flag.Duration("interval", 1*time.Minute, "Refresh interval for json scraping.")
 		namespace     = flag.String("namespace", "json", "Namespace for metrics exported from Json.")
 		debug         = flag.Bool("debug", false, "Print debug information")
+		jmx           = flag.Bool("jmx", false, "Enable jmx mode when parsing - name attribute will turn into path.")
 		unsecured     = flag.Bool("unsecured", false, "Accept untrusted https certificate(used for private certificates)")
 		blacklist     = flag.String("blacklist", "", "Blacklist regex expression of metric names.")
 		whitelist     = flag.String("whitelist", "", "Whitelist regex expression of metric names.")
@@ -509,7 +524,7 @@ func main() {
 		}
 	}
 
-	exporter := JsonExporter(urls, *Timeout, *namespace, labels, labelValues, *debug, *unsecured, *blacklist, *whitelist, *interval, *pathlabel, *valuelabel)
+	exporter := JsonExporter(urls, *Timeout, *namespace, labels, labelValues, *debug, *unsecured, *blacklist, *whitelist, *interval, *pathlabel, *valuelabel, *jmx)
 	prometheus.MustRegister(exporter)
 
 	log.Println("Starting Server:", *listenAddress)
