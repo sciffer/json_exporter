@@ -1,28 +1,29 @@
 package main
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"flag"
-	"github.com/prometheus/client_golang/prometheus"
 	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
-	"crypto/tls"
 	_ "net/http/pprof"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 const (
+	//Add this suffix to any exported help line
 	helpSuffix = " json_exporter exported metric"
+	//Version const to spcify the version of the exporter
 	Version = 0.1
 )
-
-
 
 // Convert regex string to Map
 func regexStr2Map(regexString string) *map[string]*regexp.Regexp {
@@ -53,25 +54,25 @@ type Exporter struct {
 
 	gauges  map[string]*prometheus.GaugeVec
 	updated map[string]uint
-	exist map[string]uint
+	exist   map[string]uint
 
 	blacklist *regexp.Regexp
 	whitelist *regexp.Regexp
 
-        cleaner   *strings.Replacer
+	cleaner *strings.Replacer
 
 	pathlabels map[string]*regexp.Regexp
 
 	client *http.Client
 }
 
-// NewExporter returns an initialized Exporter.
-func JsonExporter(urls []string, timeout time.Duration, namespace string, labels []string, labelvalues []string, debug bool, unsecure bool, blacklist string, whitelist string, refreshinterval time.Duration, pathlabels string, valuelabels string, jmx bool) *Exporter {
+// JSONExporter returns an initialized Exporter.
+func JSONExporter(urls []string, timeout time.Duration, namespace string, labels []string, labelvalues []string, debug bool, unsecure bool, blacklist string, whitelist string, refreshinterval time.Duration, pathlabels string, valuelabels string, jmx bool) *Exporter {
 	gauges := make(map[string]*prometheus.GaugeVec)
 	updated := make(map[string]uint)
 	exist := make(map[string]uint)
 	var blist, wlist *regexp.Regexp
-	var IleagalCharsConversion = []string {" ","_",",","_",":","_","-","_","=","_",".","_"} 
+	var IleagalCharsConversion = []string{" ", "_", ",", "_", ":", "_", "-", "_", "=", "_", ".", "_"}
 	if blacklist != "" {
 		blist = regexp.MustCompile(blacklist)
 	}
@@ -98,7 +99,7 @@ func JsonExporter(urls []string, timeout time.Duration, namespace string, labels
 
 		gauges:  gauges,
 		updated: updated,
-		exist: exist,
+		exist:   exist,
 
 		blacklist: blist,
 		whitelist: wlist,
@@ -143,9 +144,8 @@ func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
 func (e *Exporter) matchMetric(name string) bool {
 	if (e.blacklist != nil && e.blacklist.MatchString(name)) || (e.whitelist != nil && !e.whitelist.MatchString(name)) {
 		return false
-	} else {
-		return true
 	}
+	return true
 }
 
 // Match metric name based on regex list - for usage as label value
@@ -167,7 +167,7 @@ func (e *Exporter) addGauge(name string, value float64, help string) {
 			e.exist[name] = 0
 		}
 		e.gauges[name].WithLabelValues(e.labelvalues...).Set(value)
-		e.updated[name] += 1
+		e.updated[name]++
 	}
 }
 
@@ -255,15 +255,15 @@ func (e *Exporter) collectLabels(regexMap *map[string]*regexp.Regexp) {
 			continue
 		}
 
-		var allJson map[string]interface{}
-		err = json.Unmarshal(body, &allJson)
+		var allJSON map[string]interface{}
+		err = json.Unmarshal(body, &allJSON)
 		if err != nil {
 			log.Println("Failed to unmarshal JSON into struct:", err)
 			continue
 		}
 
 		// Extracrt the metrics from the json interface
-		e.extractLabel("", allJson, regexMap)
+		e.extractLabel("", allJSON, regexMap)
 		if len(*regexMap) == 0 {
 			break
 		}
@@ -272,13 +272,13 @@ func (e *Exporter) collectLabels(regexMap *map[string]*regexp.Regexp) {
 
 // Extract metrics of generic json interface
 // push extracted metrics accordingly (to guages only at the moment)
-func (e *Exporter) extractJson(metric string, jsonInt map[string]interface{}) {
+func (e *Exporter) extractJSON(metric string, jsonInt map[string]interface{}) {
 	newMetric := ""
 	//Handle jmx mode metric name replacement
 	if e.jmx {
-    if name, ok := jsonInt["name"].(string); ok {
-		  metric = e.cleaner.Replace(name)
-    }
+		if name, ok := jsonInt["name"].(string); ok {
+			metric = e.cleaner.Replace(name)
+		}
 	}
 	for k, v := range jsonInt {
 		if len(metric) > 0 {
@@ -306,7 +306,7 @@ func (e *Exporter) extractJson(metric string, jsonInt map[string]interface{}) {
 					if e.debug {
 						log.Println("Extracting json values from the string in:", newMetric)
 					}
-					e.extractJson(newMetric, stats)
+					e.extractJSON(newMetric, stats)
 				}
 			}
 		case int:
@@ -335,12 +335,12 @@ func (e *Exporter) extractJson(metric string, jsonInt map[string]interface{}) {
 			if e.debug {
 				log.Println(newMetric, "is hash", e.labels)
 			}
-			e.extractJson(newMetric, vv)
+			e.extractJSON(newMetric, vv)
 		case []interface{}:
 			if e.debug {
 				log.Println(newMetric, "is an array", e.labels)
 			}
-			e.extractJsonArray(newMetric, vv)
+			e.extractJSONArray(newMetric, vv)
 		default:
 			if e.debug {
 				log.Println(newMetric, "is of a type I don't know how to handle")
@@ -353,7 +353,7 @@ func (e *Exporter) extractJson(metric string, jsonInt map[string]interface{}) {
 }
 
 // Extract metrics from json array interface
-func (e *Exporter) extractJsonArray(metric string, jsonInt []interface{}) {
+func (e *Exporter) extractJSONArray(metric string, jsonInt []interface{}) {
 	newMetric := ""
 	for k, v := range jsonInt {
 		if len(metric) > 0 {
@@ -371,13 +371,13 @@ func (e *Exporter) extractJsonArray(metric string, jsonInt []interface{}) {
 			if e.debug {
 				log.Println(newMetric, "is string", vv)
 			}
-			if len(vv) >2 && vv[0] == '{' {
+			if len(vv) > 2 && vv[0] == '{' {
 				var stats map[string]interface{}
 				err := json.Unmarshal([]byte(vv), &stats)
 				if err != nil {
 					log.Println("Failed to parse json from string", newMetric)
 				} else {
-					e.extractJson(newMetric, stats)
+					e.extractJSON(newMetric, stats)
 					if e.debug {
 						log.Println("Extracting json values from the string in:", newMetric)
 					}
@@ -409,12 +409,12 @@ func (e *Exporter) extractJsonArray(metric string, jsonInt []interface{}) {
 			if e.debug {
 				log.Println(newMetric, "is hash")
 			}
-			e.extractJson(newMetric, vv)
+			e.extractJSON(newMetric, vv)
 		case []interface{}:
 			if e.debug {
 				log.Println(newMetric, "is an array")
 			}
-			e.extractJsonArray(newMetric, vv)
+			e.extractJSONArray(newMetric, vv)
 		default:
 			if e.debug {
 				log.Println(newMetric, "is of a type I don't know how to handle")
@@ -475,7 +475,7 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 			}
 
 			// Extracrt the metrics from the json interface
-			e.extractJson("", allStats)
+			e.extractJSON("", allStats)
 		}
 		e.nextrefresh = time.Now().Add(e.interval)
 	}
@@ -505,7 +505,7 @@ func main() {
 		pathlabel     = flag.String("pathlabel", "", "Create labels from path segments with regex match, format: <label1>:<regex1>[/<label2>:<regex2>[/...]].")
 	)
 	flag.Parse()
-	log.Println("json_exporter",Version)
+	log.Println("json_exporter", Version)
 	if *version {
 		return
 	}
@@ -526,16 +526,16 @@ func main() {
 		}
 	}
 
-	exporter := JsonExporter(urls, *Timeout, *namespace, labels, labelValues, *debug, *unsecured, *blacklist, *whitelist, *interval, *pathlabel, *valuelabel, *jmx)
+	exporter := JSONExporter(urls, *Timeout, *namespace, labels, labelValues, *debug, *unsecured, *blacklist, *whitelist, *interval, *pathlabel, *valuelabel, *jmx)
 	prometheus.MustRegister(exporter)
 
 	log.Println("Starting Server:", *listenAddress)
 	http.Handle(*metricsPath, prometheus.Handler())
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`<html>
-             <head><title>Json Exporter</title></head>
+             <head><title>JSON Exporter</title></head>
              <body>
-             <h1>Json Exporter</h1>
+             <h1>JSON Exporter</h1>
              <p><a href='` + *metricsPath + `'>Metrics</a></p>
              </body>
              </html>`))
