@@ -162,6 +162,9 @@ func (e *Exporter) matchLabel(name string, labelRegex *map[string]*regexp.Regexp
 
 // Adding single gauge metric to the slice
 func (e *Exporter) addGauge(name string, value float64, help string) {
+	if e.lowercase {
+		name = strings.ToLower(name)
+	}
 	if e.matchMetric(name) {
 		if _, exists := e.gauges[name]; !exists {
 			e.gauges[name] = prometheus.NewGaugeVec(prometheus.GaugeOpts{Namespace: e.namespace, Name: name, Help: help}, e.labels)
@@ -175,6 +178,9 @@ func (e *Exporter) addGauge(name string, value float64, help string) {
 
 // Adding a label to slices
 func (e *Exporter) addLabel(name string, value string) {
+	if e.lowercase {
+		name = strings.ToLower(name)
+	}
 	e.labels = append(e.labels, name)
 	e.labelvalues = append(e.labelvalues, value)
 }
@@ -281,18 +287,12 @@ func (e *Exporter) extractJSON(metric string, jsonInt map[string]interface{}) {
 		if name, ok := jsonInt["name"].(string); ok {
 			metric = e.cleaner.Replace(name)
 		}
-		if e.lowercase {
-			metric = strings.ToLower(metric)
-		}
 	}
 	for k, v := range jsonInt {
 		if len(metric) > 0 {
 			newMetric = metric + "_" + k
 		} else {
 			newMetric = k
-		}
-		if e.lowercase {
-			newMetric = strings.ToLower(newMetric)
 		}
 		label := e.matchLabel(newMetric, &e.pathlabels)
 		if label != "" {
@@ -301,9 +301,6 @@ func (e *Exporter) extractJSON(metric string, jsonInt map[string]interface{}) {
 				newMetric = strings.Replace(newMetric, value[0], "", -1)
 				if len(newMetric) < 1 {
 					newMetric = label
-					if e.lowercase {
-						newMetric = strings.ToLower(newMetric)
-					}
 				}
 				e.addLabel(label, value[1])
 			}
@@ -378,9 +375,6 @@ func (e *Exporter) extractJSONArray(metric string, jsonInt []interface{}) {
 		} else {
 			newMetric = strconv.Itoa(k)
 		}
-		if e.lowercase {
-			newMetric = strings.ToLower(newMetric)
-		}
 		label := e.matchLabel(newMetric, &e.pathlabels)
 		if label != "" {
 			value := e.pathlabels[label].FindStringSubmatch(newMetric)
@@ -388,9 +382,6 @@ func (e *Exporter) extractJSONArray(metric string, jsonInt []interface{}) {
 				newMetric = strings.Replace(newMetric, value[0], "", -1)
 				if len(newMetric) < 1 {
 					newMetric = label
-					if e.lowercase {
-						newMetric = strings.ToLower(newMetric)
-					}
 				}
 				e.addLabel(label, value[1])
 			}
