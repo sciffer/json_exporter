@@ -3,12 +3,13 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/prometheus/client_golang/prometheus"
 	"io/ioutil"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 var (
@@ -57,7 +58,7 @@ func MockupServer(test *testing.T) {
 
 func MyExporter(test *testing.T) {
 	fmt.Println("Json Exporter called")
-	exporter := JSONExporter([]string{"http://localhost:9110/testmetrics"}, 5*time.Second, "test", staticLabels, staticValues, false, false, "blacklistedMetric", "", 1*time.Minute, "path1:^pathroot_pathvalue1$/path2:^path1_pathvalue2$", "valuelabel:^vlabel$", false)
+	exporter := JSONExporter([]string{"http://localhost:9110/testmetrics"}, 5*time.Second, "test", staticLabels, staticValues, false, false, "blacklistedMetric", "", 1*time.Minute, "path1:^pathroot_(pathvalue1)$/path2:^path1_(pathvalue2)$", "valuelabel:^vlabel$", false)
 	prometheus.MustRegister(exporter)
 	http.Handle("/metrics", prometheus.Handler())
 	test.Fatal(http.ListenAndServe(":9109", nil))
@@ -82,6 +83,7 @@ func TestMain(test *testing.T) {
 	}
 	resp.Body.Close()
 	// Test json exporter results
+	fmt.Println(string(body))
 	for _, line := range expected {
 		if !strings.Contains(string(body), line) {
 			test.Error("Could not find string:'" + line + "' in json_exporter body!")

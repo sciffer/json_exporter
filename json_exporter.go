@@ -288,8 +288,14 @@ func (e *Exporter) extractJSON(metric string, jsonInt map[string]interface{}) {
 		}
 		label := e.matchLabel(newMetric, &e.pathlabels)
 		if label != "" {
-			newMetric = label
-			e.addLabel(label, k)
+			value := e.pathlabels[label].FindStringSubmatch(newMetric)
+			if len(value) > 1 {
+				newMetric = strings.Replace(newMetric, value[0], "", -1)
+				if len(newMetric) < 1 {
+					newMetric = label
+				}
+				e.addLabel(label, value[1])
+			}
 		}
 		switch vv := v.(type) {
 		case string:
@@ -363,8 +369,14 @@ func (e *Exporter) extractJSONArray(metric string, jsonInt []interface{}) {
 		}
 		label := e.matchLabel(newMetric, &e.pathlabels)
 		if label != "" {
-			newMetric = label
-			e.addLabel(label, strconv.Itoa(k))
+			value := e.pathlabels[label].FindStringSubmatch(newMetric)
+			if len(value) > 1 {
+				newMetric = strings.Replace(newMetric, value[0], "", -1)
+				if len(newMetric) < 1 {
+					newMetric = label
+				}
+				e.addLabel(label, value[1])
+			}
 		}
 		switch vv := v.(type) {
 		case string:
