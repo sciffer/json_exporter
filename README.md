@@ -2,7 +2,7 @@
 
 <p>A generic json exporter for prometheus.io monitoring solution, the exporter will extract all the numeric values from the json and turn them into metrics, booleans will be translated(1 - true, 0 - false) and strings will be ignored. The exporter will try to parse through the whole json and array depths while the metric names will include the hierarchy with _ as seperator.</p>
 
-json_exporter [-jmx] [-debug] [-valuelabels name:regex[ /<..>]] [-pathlabels name:regex[ /<..>]] [-labels label1[,label2[..labelN]]] [-values label1value[,label2value[..labelNvalue]]] [-timeout timeout] [-interval minimum refresh interval] [-namespace namespace] [-web.listen-address listening address] [-web.telemetry-path "telemetry path"] [-blacklist regex>] [-whitelist regex] url1[ url2[.. urlN]]
+json_exporter [-lowercase] [-jmx] [-debug] [-valuelabels name:regex[ /<..>]] [-pathlabels name:regex[ /<..>]] [-labels label1[,label2[..labelN]]] [-values label1value[,label2value[..labelNvalue]]] [-timeout timeout] [-interval minimum refresh interval] [-namespace namespace] [-web.listen-address listening address] [-web.telemetry-path "telemetry path"] [-blacklist regex>] [-whitelist regex] url1[ url2[.. urlN]]
 
 **Url list** : The list of non flagged parameters will be treated as URL's
 

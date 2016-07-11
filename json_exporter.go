@@ -47,6 +47,7 @@ type Exporter struct {
 	mutex       sync.RWMutex
 	debug       bool
 	jmx         bool
+	lowercase   bool
 	nextrefresh time.Time
 	interval    time.Duration
 
@@ -67,7 +68,7 @@ type Exporter struct {
 }
 
 // JSONExporter returns an initialized Exporter.
-func JSONExporter(urls []string, timeout time.Duration, namespace string, labels []string, labelvalues []string, debug bool, unsecure bool, blacklist string, whitelist string, refreshinterval time.Duration, pathlabels string, valuelabels string, jmx bool) *Exporter {
+func JSONExporter(urls []string, timeout time.Duration, namespace string, labels []string, labelvalues []string, debug bool, unsecure bool, blacklist string, whitelist string, refreshinterval time.Duration, pathlabels string, valuelabels string, jmx bool, lowercase bool) *Exporter {
 	gauges := make(map[string]*prometheus.GaugeVec)
 	updated := make(map[string]uint)
 	exist := make(map[string]uint)
@@ -88,6 +89,7 @@ func JSONExporter(urls []string, timeout time.Duration, namespace string, labels
 		labelvalues: labelvalues,
 		debug:       debug,
 		jmx:         jmx,
+		lowercase:   lowercase,
 		nextrefresh: time.Now(),
 		interval:    refreshinterval,
 
@@ -277,7 +279,10 @@ func (e *Exporter) extractJSON(metric string, jsonInt map[string]interface{}) {
 	//Handle jmx mode metric name replacement
 	if e.jmx {
 		if name, ok := jsonInt["name"].(string); ok {
-			metric = strings.ToLower(e.cleaner.Replace(name))
+			metric = e.cleaner.Replace(name)
+		}
+		if e.lowercase {
+			metric = strings.ToLower(metric)
 		}
 	}
 	for k, v := range jsonInt {
@@ -286,6 +291,9 @@ func (e *Exporter) extractJSON(metric string, jsonInt map[string]interface{}) {
 		} else {
 			newMetric = k
 		}
+		if e.lowercase {
+			newMetric = strings.ToLower(newMetric)
+		}
 		label := e.matchLabel(newMetric, &e.pathlabels)
 		if label != "" {
 			value := e.pathlabels[label].FindStringSubmatch(newMetric)
@@ -293,6 +301,9 @@ func (e *Exporter) extractJSON(metric string, jsonInt map[string]interface{}) {
 				newMetric = strings.Replace(newMetric, value[0], "", -1)
 				if len(newMetric) < 1 {
 					newMetric = label
+					if e.lowercase {
+						newMetric = strings.ToLower(newMetric)
+					}
 				}
 				e.addLabel(label, value[1])
 			}
@@ -367,6 +378,9 @@ func (e *Exporter) extractJSONArray(metric string, jsonInt []interface{}) {
 		} else {
 			newMetric = strconv.Itoa(k)
 		}
+		if e.lowercase {
+			newMetric = strings.ToLower(newMetric)
+		}
 		label := e.matchLabel(newMetric, &e.pathlabels)
 		if label != "" {
 			value := e.pathlabels[label].FindStringSubmatch(newMetric)
@@ -374,6 +388,9 @@ func (e *Exporter) extractJSONArray(metric string, jsonInt []interface{}) {
 				newMetric = strings.Replace(newMetric, value[0], "", -1)
 				if len(newMetric) < 1 {
 					newMetric = label
+					if e.lowercase {
+						newMetric = strings.ToLower(newMetric)
+					}
 				}
 				e.addLabel(label, value[1])
 			}
@@ -509,7 +526,8 @@ func main() {
 		interval      = flag.Duration("interval", 1*time.Minute, "Refresh interval for json scraping.")
 		namespace     = flag.String("namespace", "json", "Namespace for metrics exported from Json.")
 		debug         = flag.Bool("debug", false, "Print debug information")
-		jmx           = flag.Bool("jmx", false, "Enable jmx mode when parsing - name attribute will turn into path.")
+		lowercase     = flag.Bool("lowercase", true, "Lowercase metric names")
+		jmx           = flag.Bool("jmx", false, "Enable jmx mode when parsing - name attribute will turn into path")
 		unsecured     = flag.Bool("unsecured", false, "Accept untrusted https certificate(used for private certificates)")
 		blacklist     = flag.String("blacklist", "", "Blacklist regex expression of metric names.")
 		whitelist     = flag.String("whitelist", "", "Whitelist regex expression of metric names.")
@@ -538,7 +556,7 @@ func main() {
 		}
 	}
 
-	exporter := JSONExporter(urls, *Timeout, *namespace, labels, labelValues, *debug, *unsecured, *blacklist, *whitelist, *interval, *pathlabel, *valuelabel, *jmx)
+	exporter := JSONExporter(urls, *Timeout, *namespace, labels, labelValues, *debug, *unsecured, *blacklist, *whitelist, *interval, *pathlabel, *valuelabel, *jmx, *lowercase)
 	prometheus.MustRegister(exporter)
 
 	log.Println("Starting Server:", *listenAddress)

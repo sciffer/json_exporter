@@ -58,7 +58,7 @@ func MockupServer(test *testing.T) {
 
 func MyExporter(test *testing.T) {
 	fmt.Println("Json Exporter called")
-	exporter := JSONExporter([]string{"http://localhost:9110/testmetrics"}, 5*time.Second, "test", staticLabels, staticValues, false, false, "blacklistedMetric", "", 1*time.Minute, "path1:^pathroot_(pathvalue1)$/path2:^path1_(pathvalue2)$", "valuelabel:^vlabel$", false)
+	exporter := JSONExporter([]string{"http://localhost:9110/testmetrics"}, 5*time.Second, "test", staticLabels, staticValues, false, false, "blacklistedMetric", "", 1*time.Minute, "path1:^pathroot_(pathvalue1)$/path2:^path1_(pathvalue2)$", "valuelabel:^vlabel$", false, false)
 	prometheus.MustRegister(exporter)
 	http.Handle("/metrics", prometheus.Handler())
 	test.Fatal(http.ListenAndServe(":9109", nil))
