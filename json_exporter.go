@@ -277,7 +277,7 @@ func (e *Exporter) extractJSON(metric string, jsonInt map[string]interface{}) {
 	//Handle jmx mode metric name replacement
 	if e.jmx {
 		if name, ok := jsonInt["name"].(string); ok {
-			metric = e.cleaner.Replace(name)
+			metric = strings.ToLower(e.cleaner.Replace(name))
 		}
 	}
 	for k, v := range jsonInt {
