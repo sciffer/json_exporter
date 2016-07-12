@@ -160,6 +160,17 @@ func (e *Exporter) matchLabel(name string, labelRegex *map[string]*regexp.Regexp
 	return ""
 }
 
+// Match metric name based on regex list - for usage as label value
+func (e *Exporter) matchLabels(name string, labelRegex *map[string]*regexp.Regexp) []string {
+	var labels []string
+	for k, v := range *labelRegex {
+		if v.MatchString(name) {
+			labels = append(labels, k)
+		}
+	}
+	return labels
+}
+
 // Adding single gauge metric to the slice
 func (e *Exporter) addGauge(name string, value float64, help string) {
 	if e.lowercase {
@@ -186,16 +197,16 @@ func (e *Exporter) addLabel(name string, value string) {
 }
 
 // Delete the latest label
-func (e *Exporter) delLastLabel() {
-	newLastIndex := len(e.labels) - 1
+func (e *Exporter) delLastLabels(num int) {
+	newLastIndex := len(e.labels) - num
 	if newLastIndex >= 0 {
 		e.labels = e.labels[:newLastIndex]
 		e.labelvalues = e.labelvalues[:newLastIndex]
 	}
 }
 
-// Extract metrics of generic json interface
-// push extracted metrics accordingly (to guages only at the moment)
+// Extract Labels from generic json interface
+// push extracted labels to all metrics
 func (e *Exporter) extractLabel(metric string, jsonInt map[string]interface{}, regexMap *map[string]*regexp.Regexp) {
 	newMetric := ""
 	for k, v := range jsonInt {
@@ -294,8 +305,8 @@ func (e *Exporter) extractJSON(metric string, jsonInt map[string]interface{}) {
 		} else {
 			newMetric = k
 		}
-		label := e.matchLabel(newMetric, &e.pathlabels)
-		if label != "" {
+		labels := e.matchLabels(newMetric, &e.pathlabels)
+		for _, label := range labels {
 			value := e.pathlabels[label].FindStringSubmatch(newMetric)
 			if len(value) > 1 {
 				newMetric = strings.Replace(newMetric, value[0], "", -1)
@@ -360,8 +371,9 @@ func (e *Exporter) extractJSON(metric string, jsonInt map[string]interface{}) {
 				log.Println(newMetric, "is of a type I don't know how to handle")
 			}
 		}
-		if label != "" {
-			e.delLastLabel()
+		// Remove path labels that were added for this JSON subtree only
+		if len(labels) > 0 {
+			e.delLastLabels(len(labels))
 		}
 	}
 }
@@ -375,8 +387,8 @@ func (e *Exporter) extractJSONArray(metric string, jsonInt []interface{}) {
 		} else {
 			newMetric = strconv.Itoa(k)
 		}
-		label := e.matchLabel(newMetric, &e.pathlabels)
-		if label != "" {
+		labels := e.matchLabels(newMetric, &e.pathlabels)
+		for _, label := range labels {
 			value := e.pathlabels[label].FindStringSubmatch(newMetric)
 			if len(value) > 1 {
 				newMetric = strings.Replace(newMetric, value[0], "", -1)
@@ -440,8 +452,8 @@ func (e *Exporter) extractJSONArray(metric string, jsonInt []interface{}) {
 				log.Println(newMetric, "is of a type I don't know how to handle")
 			}
 		}
-		if label != "" {
-			e.delLastLabel()
+		if len(labels) > 0 {
+			e.delLastLabels(len(labels))
 		}
 	}
 }
